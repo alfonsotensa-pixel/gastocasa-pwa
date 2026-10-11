@@ -294,15 +294,17 @@
     </div>
   </div>
 
-  <!-- MODAL: AÑADIR MIEMBRO -->
+  <!-- MODAL: CREAR / EDITAR MIEMBRO -->
   <div class="modal-overlay" id="modal-member-edit">
     <div class="bottom-sheet">
       <div class="sheet-header">
-        <div class="sheet-title">NUEVO MIEMBRO DEL HOGAR</div>
+        <div class="sheet-title" id="mem-modal-title">NUEVO MIEMBRO DEL HOGAR</div>
         <button class="btn-close-sheet" id="btn-close-member-modal">✕</button>
       </div>
 
       <form id="form-member-edit">
+        <input type="hidden" id="mem-edit-id">
+
         <div class="form-group">
           <label class="form-label">Nombre o Apodo:</label>
           <input type="text" id="mem-edit-name" class="form-input" placeholder="Ej. Mamá, Carlos, Roomie..." required>
@@ -313,7 +315,12 @@
           <input type="text" id="mem-edit-avatar" class="form-input" placeholder="👤, 👩, 👨, ⚡..." maxlength="4">
         </div>
 
-        <button type="submit" class="b-btn" style="margin-top: 10px;">
+        <div class="form-group">
+          <label class="form-label">Color distintivo:</label>
+          <input type="color" id="mem-edit-color" class="form-input" style="height: 42px; padding: 2px;">
+        </div>
+
+        <button type="submit" class="b-btn" id="mem-modal-submit" style="margin-top: 10px;">
           AÑADIR MIEMBRO
         </button>
       </form>

@@ -692,19 +692,28 @@ class AppController {
         </div>
         <div style="display: flex; flex-direction: column; gap: 8px;">
           ${this.members.map(m => `
-            <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px; border: var(--border-solid); background: var(--surface-card); box-shadow: 1px 1px 0px #000;">
-              <div style="display: flex; align-items: center; gap: 8px;">
-                <span style="font-size: 22px;">${m.avatar}</span>
-                <div>
-                  <div style="font-weight: 800; font-size: 13px;">${m.name} ${!m.isActive ? '(Inactivo)' : ''}</div>
+            <div style="display: flex; align-items: center; justify-content: space-between; padding: 10px; border: var(--border-solid); background: var(--surface-card); box-shadow: 1px 1px 0px #000; border-radius: var(--radius-micro); gap: 8px; flex-wrap: wrap;">
+              <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
+                <span style="font-size: 24px; border: 2px solid ${m.color || 'var(--navy-deep)'}; border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; background: var(--surface-muted); flex-shrink: 0;">${m.avatar}</span>
+                <div style="min-width: 0;">
+                  <div style="font-weight: 800; font-size: 14px; display: flex; align-items: center; gap: 6px;">
+                    <span>${m.name}</span>
+                    ${!m.isActive ? '<span style="font-size: 10px; color: var(--coral-expense); font-weight: 700;">(Inactivo)</span>' : ''}
+                  </div>
                   <div style="font-family: var(--font-mono); font-size: 10px; color: var(--ink-secondary);">
                     ${m.id === this.activeMemberId ? '★ Usuario Activo en este móvil' : ''}
                   </div>
                 </div>
               </div>
-              <button class="btn-action-icon btn-toggle-member" data-id="${m.id}">
-                ${m.isActive ? 'DESACTIVAR' : 'ACTIVAR'}
-              </button>
+              <div style="display: flex; gap: 4px; align-items: center; flex-wrap: wrap;">
+                <button class="btn-action-icon btn-edit-member" data-id="${m.id}">EDITAR</button>
+                <button class="btn-action-icon btn-toggle-member" data-id="${m.id}">
+                  ${m.isActive ? 'DESACTIVAR' : 'ACTIVAR'}
+                </button>
+                <button class="btn-action-icon btn-delete-member" data-id="${m.id}" style="color: var(--coral-expense);">
+                  BORRAR
+                </button>
+              </div>
             </div>
           `).join('')}
         </div>
@@ -743,6 +752,14 @@ class AppController {
     const btnNewMem = document.getElementById('btn-open-member-modal');
     if (btnNewMem) btnNewMem.onclick = () => this.openMemberModal();
 
+    // Vincular editar miembro
+    container.querySelectorAll('.btn-edit-member').forEach(b => {
+      b.onclick = () => {
+        const mem = this.members.find(m => m.id === b.dataset.id);
+        if (mem) this.openMemberModal(mem);
+      };
+    });
+
     // Vincular toggle miembro
     container.querySelectorAll('.btn-toggle-member').forEach(b => {
       b.onclick = async () => {
@@ -757,6 +774,13 @@ class AppController {
       };
     });
 
+    // Vincular borrar miembro
+    container.querySelectorAll('.btn-delete-member').forEach(b => {
+      b.onclick = () => {
+        this.handleDeleteMember(b.dataset.id);
+      };
+    });
+
     // Vincular botones de saldar deuda
     container.querySelectorAll('.btn-settle-debt').forEach(b => {
       b.onclick = () => {
@@ -764,6 +788,70 @@ class AppController {
         if (s) this.openSettlementModal(s);
       };
     });
+  }
+
+  async handleDeleteMember(memberId) {
+    const member = this.members.find(m => m.id === memberId);
+    if (!member) return;
+
+    if (this.members.length <= 1) {
+      alert('No puedes eliminar al único miembro del hogar. Siempre debe existir al menos un miembro.');
+      return;
+    }
+
+    // Verificar si el miembro tiene gastos asociados
+    const associatedTx = this.transactions.filter(t => 
+      t.paidByMemberId === memberId || 
+      (Array.isArray(t.beneficiaryMemberIds) && t.beneficiaryMemberIds.includes(memberId))
+    );
+
+    if (associatedTx.length > 0) {
+      const remainingMembers = this.members.filter(m => m.id !== memberId);
+      const memberOptions = remainingMembers.map(m => `• ${m.name}`).join('\n');
+
+      const targetName = prompt(
+        `El miembro "${member.name}" tiene ${associatedTx.length} gasto(s) o registros asociados.\n\n` +
+        `Para no romper tu historial financiero, indica el nombre exacto del miembro al que deseas reasignar sus gastos:\n\n${memberOptions}`,
+        remainingMembers[0]?.name || ''
+      );
+
+      if (!targetName) return;
+
+      const targetMember = remainingMembers.find(m => m.name.toLowerCase() === targetName.trim().toLowerCase());
+      if (!targetMember) {
+        alert('Miembro no encontrado. Operación cancelada para proteger tus datos.');
+        return;
+      }
+
+      // Reasignar transacciones
+      for (const tx of associatedTx) {
+        if (tx.paidByMemberId === memberId) {
+          tx.paidByMemberId = targetMember.id;
+        }
+        if (Array.isArray(tx.beneficiaryMemberIds) && tx.beneficiaryMemberIds.includes(memberId)) {
+          tx.beneficiaryMemberIds = tx.beneficiaryMemberIds.map(id => id === memberId ? targetMember.id : id);
+        }
+        await db.put('transactions', tx);
+      }
+    } else {
+      const confirmDelete = confirm(`¿Estás seguro de que deseas eliminar permanentemente a "${member.name}"?`);
+      if (!confirmDelete) return;
+    }
+
+    // Si era el usuario activo, cambiar a otro miembro
+    if (this.activeMemberId === memberId) {
+      const nextMember = this.members.find(m => m.id !== memberId);
+      this.activeMemberId = nextMember ? nextMember.id : null;
+      if (this.settings) {
+        this.settings.activeMemberId = this.activeMemberId;
+        await db.put('settings', this.settings);
+      }
+    }
+
+    await db.delete('members', memberId);
+    await this.refreshData();
+    this.renderMembersView();
+    this.pwaManager.showToast(`Miembro "${member.name}" eliminado correctamente`);
   }
 
   // 5. RENDER AJUSTES
@@ -1046,7 +1134,7 @@ class AppController {
     modal.classList.add('is-open');
   }
 
-  // --- MODAL DE MIEMBRO ---
+  // --- MODAL DE MIEMBRO (CREAR / EDITAR) ---
   setupMemberModal() {
     const modal = document.getElementById('modal-member-edit');
     const closeBtn = document.getElementById('btn-close-member-modal');
@@ -1062,33 +1150,64 @@ class AppController {
     if (form) {
       form.onsubmit = async (e) => {
         e.preventDefault();
+        const id = document.getElementById('mem-edit-id')?.value;
         const name = document.getElementById('mem-edit-name').value.trim();
         const avatar = document.getElementById('mem-edit-avatar').value.trim() || '👤';
+        const color = document.getElementById('mem-edit-color')?.value || '#0284C7';
 
-        const newMember = {
-          id: generateId('m'),
-          name,
-          avatar,
-          color: '#0284C7',
-          isActive: true,
-          createdAt: new Date().toISOString()
-        };
+        if (id) {
+          // Edición de miembro existente
+          const existing = this.members.find(m => m.id === id);
+          if (existing) {
+            existing.name = name;
+            existing.avatar = avatar;
+            existing.color = color;
+            await db.put('members', existing);
+            this.pwaManager.showToast(`Miembro "${name}" actualizado`);
+          }
+        } else {
+          // Creación de nuevo miembro
+          const newMember = {
+            id: generateId('m'),
+            name,
+            avatar,
+            color,
+            isActive: true,
+            createdAt: new Date().toISOString()
+          };
+          await db.put('members', newMember);
+          this.pwaManager.showToast(`Miembro "${name}" añadido`);
+        }
 
-        await db.put('members', newMember);
         await this.refreshData();
         modal.classList.remove('is-open');
         this.renderMembersView();
-        this.pwaManager.showToast(`Miembro ${name} añadido`);
       };
     }
   }
 
-  openMemberModal() {
+  openMemberModal(member = null) {
     const modal = document.getElementById('modal-member-edit');
     if (!modal) return;
-    document.getElementById('mem-edit-name').value = '';
-    document.getElementById('mem-edit-avatar').value = '👤';
+
+    const titleEl = document.getElementById('mem-modal-title');
+    const submitEl = document.getElementById('mem-modal-submit');
+    const idEl = document.getElementById('mem-edit-id');
+    const nameEl = document.getElementById('mem-edit-name');
+    const avatarEl = document.getElementById('mem-edit-avatar');
+    const colorEl = document.getElementById('mem-edit-color');
+
+    if (titleEl) titleEl.textContent = member ? 'EDITAR MIEMBRO' : 'NUEVO MIEMBRO DEL HOGAR';
+    if (submitEl) submitEl.textContent = member ? 'GUARDAR CAMBIOS' : 'AÑADIR MIEMBRO';
+    if (idEl) idEl.value = member ? member.id : '';
+    if (nameEl) nameEl.value = member ? member.name : '';
+    if (avatarEl) avatarEl.value = member ? member.avatar : '👤';
+    if (colorEl) colorEl.value = member ? (member.color || '#0284C7') : '#0284C7';
+
     modal.classList.add('is-open');
+    setTimeout(() => {
+      if (nameEl) nameEl.focus();
+    }, 120);
   }
 
   // --- MODAL DE LIQUIDACIÓN FORMAL ---

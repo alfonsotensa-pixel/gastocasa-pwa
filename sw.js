@@ -1,5 +1,4 @@
-// Service Worker Nativo - Control de Gastos del Hogar // Brutal
-const CACHE_NAME = 'gastocasa-minimal-v1.4.0';
+const CACHE_NAME = 'gastocasa-minimal-v1.5.0';
 
 const ASSETS_TO_CACHE = [
   './',
