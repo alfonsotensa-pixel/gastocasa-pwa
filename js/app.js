@@ -18,6 +18,7 @@ import {
 } from './split-engine.js';
 import { BrutalistChartEngine } from './charts-svg.js';
 import { PWAManager } from './pwa-install.js';
+import { CloudSyncEngine, SUPABASE_SETUP_SQL } from './sync-engine.js';
 
 class AppController {
   constructor() {
@@ -36,6 +37,7 @@ class AppController {
 
     this.chartEngine = null;
     this.pwaManager = null;
+    this.syncEngine = new CloudSyncEngine(this);
     this.txFilters = { search: '', categoryId: '', memberId: '', dateFrom: '', dateTo: '' };
   }
 
@@ -49,6 +51,9 @@ class AppController {
 
     // Cargar datos iniciales
     await this.refreshData();
+
+    // Inicializar motor de sincronización en la nube
+    this.syncEngine.init(this.settings);
 
     // Configurar escuchadores de interfaz
     this.setupNavigation();
@@ -859,7 +864,43 @@ class AppController {
     const container = document.getElementById('settings-view-container');
     if (!container) return;
 
+    const syncConfig = this.syncEngine?.config || {};
+
     container.innerHTML = `
+      <div class="b-card">
+        <div class="b-card-header">
+          <div class="b-card-title">☁️ SINCRONIZACIÓN EN LA NUBE (MULTI-MÓVIL)</div>
+        </div>
+        <div id="sync-status-badge" style="margin-bottom: 12px; padding: 10px 14px; border-radius: var(--radius-micro); font-size: 12px; font-weight: 700; text-align: center; border: var(--border-solid);">
+          <!-- Actualizado por syncEngine -->
+        </div>
+        <p style="font-size: 12px; color: var(--ink-secondary); margin-bottom: 12px; line-height: 1.5;">
+          Conecta una base de datos gratuita de <b>Supabase</b> para que todos los teléfonos del hogar compartan y sincronicen sus gastos en tiempo real.
+        </p>
+
+        <div class="form-group">
+          <label class="form-label">Código del Hogar (Sala compartida):</label>
+          <input type="text" class="form-input" id="setting-sync-code" placeholder="Ej. CASA-FAMILIA" value="${syncConfig.householdCode || ''}">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Supabase Project URL:</label>
+          <input type="url" class="form-input" id="setting-sync-url" placeholder="https://xyzcompany.supabase.co" value="${syncConfig.url || ''}">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Supabase Anon Public Key:</label>
+          <input type="password" class="form-input" id="setting-sync-key" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." value="${syncConfig.anonKey || ''}">
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 10px;">
+          <button class="b-btn btn-emerald" id="btn-save-sync">☁️ GUARDAR Y SINCRONIZAR AHORA</button>
+          <button class="b-btn" id="btn-share-sync" style="background: var(--cyan-active);">🔗 COPIAR ENLACE PARA OTROS MÓVILES (1 CLIC)</button>
+          <button class="b-btn btn-secondary" id="btn-copy-sql">📜 COPIAR SCRIPT SQL PARA SUPABASE</button>
+          ${syncConfig.enabled ? '<button class="b-btn btn-coral" id="btn-disconnect-sync">✕ DESCONECTAR DE LA NUBE</button>' : ''}
+        </div>
+      </div>
+
       <div class="b-card">
         <div class="b-card-header">
           <div class="b-card-title">⚙️ INFORMACIÓN DEL HOGAR</div>
@@ -880,7 +921,7 @@ class AppController {
           <div class="b-card-title">💾 COPIAS DE SEGURIDAD Y RESPALDOS</div>
         </div>
         <p style="font-size: 11px; color: var(--ink-secondary); margin-bottom: 10px;">
-          Tus datos se guardan 100% de forma local en tu teléfono. Descarga una copia de respaldo para transferir a otro móvil o abrir en Excel.
+          Tus datos se guardan de forma local en tu teléfono. Descarga una copia de respaldo para transferir a otro móvil o abrir en Excel.
         </p>
         <div style="display: flex; flex-direction: column; gap: 8px;">
           <button class="b-btn" id="btn-export-json">💾 DESCARGAR COPIA COMPLETA (.JSON)</button>
@@ -901,10 +942,95 @@ class AppController {
       </div>
     `;
 
+    // Actualizar estado del badge de sync
+    this.syncEngine?.updateUIStatus();
+
+    // Guardar configuración de sync
+    const btnSaveSync = document.getElementById('btn-save-sync');
+    if (btnSaveSync) {
+      btnSaveSync.onclick = async () => {
+        const code = document.getElementById('setting-sync-code')?.value.trim().toUpperCase();
+        const url = document.getElementById('setting-sync-url')?.value.trim().replace(/\/+$/, '');
+        const key = document.getElementById('setting-sync-key')?.value.trim();
+
+        if (!code || !url || !key) {
+          alert('Por favor completa el Código del Hogar, la URL y la Anon Key de Supabase.');
+          return;
+        }
+
+        this.syncEngine.config.householdCode = code;
+        this.syncEngine.config.url = url;
+        this.syncEngine.config.anonKey = key;
+        this.syncEngine.config.enabled = true;
+
+        await this.syncEngine.saveConfigToSettings();
+        this.syncEngine.startAutoSync();
+        this.pwaManager.showToast('Configuración en la nube guardada. Sincronizando...');
+        await this.syncEngine.syncNow();
+        this.renderSettingsView();
+      };
+    }
+
+    // Copiar enlace de invitación para otros móviles
+    const btnShareSync = document.getElementById('btn-share-sync');
+    if (btnShareSync) {
+      btnShareSync.onclick = async () => {
+        if (!this.syncEngine?.config.enabled) {
+          alert('Primero debes guardar la URL, Clave y Código de Hogar antes de generar el enlace de invitación.');
+          return;
+        }
+        const link = this.syncEngine.generateShareableLink();
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(link);
+            alert('¡Enlace de invitación copiado al portapapeles!\n\nEnvíalo por WhatsApp o mensaje al otro móvil. Al abrirlo, se configurará automáticamente en 1 solo clic.');
+          } else {
+            prompt('Copia este enlace y ábrelo en el otro móvil para sincronizarlo automáticamente:', link);
+          }
+        } catch (e) {
+          prompt('Copia este enlace y ábrelo en el otro móvil:', link);
+        }
+      };
+    }
+
+    // Copiar script SQL
+    const btnCopySql = document.getElementById('btn-copy-sql');
+    if (btnCopySql) {
+      btnCopySql.onclick = async () => {
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(SUPABASE_SETUP_SQL);
+            alert('¡Script SQL copiado al portapapeles!\n\nPégalo en el SQL Editor de tu proyecto en Supabase (supabase.com) y pulsa Run.');
+          } else {
+            prompt('Copia este SQL para ejecutarlo en Supabase:', SUPABASE_SETUP_SQL);
+          }
+        } catch (e) {
+          prompt('Copia este SQL para ejecutarlo en Supabase:', SUPABASE_SETUP_SQL);
+        }
+      };
+    }
+
+    // Desconectar sync
+    const btnDisconnectSync = document.getElementById('btn-disconnect-sync');
+    if (btnDisconnectSync) {
+      btnDisconnectSync.onclick = async () => {
+        const confirmDisc = confirm('¿Deseas desconectar este móvil de la nube y volver al modo solo local?');
+        if (!confirmDisc) return;
+        this.syncEngine.config.enabled = false;
+        this.syncEngine.config.url = '';
+        this.syncEngine.config.anonKey = '';
+        this.syncEngine.config.householdCode = '';
+        this.syncEngine.stopAutoSync();
+        await this.syncEngine.saveConfigToSettings();
+        this.pwaManager.showToast('Desconectado de la nube');
+        this.renderSettingsView();
+      };
+    }
+
     // Re-vincular botones de backup
     this.pwaManager.setupExportImportHandlers();
 
-    // Guardar ajustes
+    // Guardar ajustes generales
     const btnSave = document.getElementById('btn-save-settings');
     if (btnSave) {
       btnSave.onclick = async () => {
@@ -923,6 +1049,7 @@ class AppController {
       btnDemo.onclick = async () => {
         await db.loadDemoData();
         await this.refreshData();
+        this.syncEngine?.syncNow().catch(() => {});
         this.pwaManager.showToast('12 gastos de prueba inyectados');
         this.switchTab('dashboard');
       };
@@ -1013,6 +1140,7 @@ class AppController {
         });
 
         await db.put('transactions', newTx);
+        this.syncEngine?.pushTransaction(newTx);
         
         // Haptic feedback en dispositivos compatibles
         if (navigator.vibrate) navigator.vibrate([15]);
@@ -1242,6 +1370,7 @@ class AppController {
         });
 
         await db.put('transactions', settlementTx);
+        this.syncEngine?.pushTransaction(settlementTx);
         await this.refreshData();
         modal.classList.remove('is-open');
         this.renderMembersView();

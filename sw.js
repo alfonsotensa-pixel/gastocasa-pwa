@@ -1,4 +1,4 @@
-const CACHE_NAME = 'gastocasa-minimal-v1.5.0';
+const CACHE_NAME = 'gastocasa-minimal-v1.6.0';
 
 const ASSETS_TO_CACHE = [
   './',
@@ -12,6 +12,7 @@ const ASSETS_TO_CACHE = [
   './js/split-engine.js',
   './js/charts-svg.js',
   './js/pwa-install.js',
+  './js/sync-engine.js',
   './js/app.js',
   './icons/icon-192.svg',
   './icons/icon-512.svg'
