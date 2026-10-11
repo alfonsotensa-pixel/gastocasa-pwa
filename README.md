@@ -12,6 +12,8 @@ Tus datos se guardan únicamente en el dispositivo (IndexedDB). No hay cuentas, 
 - **Gastos con filtros:** buscador por nombre, categoría, usuario, rango de fechas, atajos (esta semana, este mes, mes pasado) y suma total de lo filtrado.
 - **Saldos entre miembros** y botón para saldar cuentas sin alterar las estadísticas de gasto.
 - **Registro rápido** (botón `+`) con teclado numérico y categoría en un toque.
+- **Sincronización en la nube (Multi-móvil):** comparte gastos y miembros en tiempo real entre múltiples teléfonos usando una base de datos gratuita de **Supabase** (PostgreSQL REST).
+- **Enlace de vinculación en 1 clic:** genera un enlace para compartir por WhatsApp; al abrirlo en el segundo móvil, se configura y sincroniza automáticamente sin tener que escribir claves.
 - **Respaldo:** exportar/importar JSON y exportar CSV (Excel / Google Sheets).
 - **PWA:** funciona sin conexión e instalable en Android e iOS.
 
