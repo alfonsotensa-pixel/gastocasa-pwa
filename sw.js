@@ -1,4 +1,4 @@
-const CACHE_NAME = 'gastocasa-minimal-v1.6.0';
+const CACHE_NAME = 'gastocasa-minimal-v1.7.0';
 
 const ASSETS_TO_CACHE = [
   './',
@@ -46,8 +46,9 @@ self.addEventListener('activate', (event) => {
 
 // Estrategia Cache-First con fallback de red para máxima velocidad offline
 self.addEventListener('fetch', (event) => {
-  // Solo interceptar peticiones GET
+  // Solo interceptar peticiones GET de nuestro propio origen (ignorar Supabase REST API)
   if (event.request.method !== 'GET') return;
+  if (!event.request.url.startsWith(self.location.origin)) return;
 
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {

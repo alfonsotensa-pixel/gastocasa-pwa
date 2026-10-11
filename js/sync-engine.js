@@ -52,16 +52,29 @@ create table if not exists transactions (
   primary key (id, household_id)
 );
 
--- Políticas de Seguridad RLS para permitir lectura y escritura anónima con clave pública (anon)
+-- Habilitar Row Level Security (RLS)
 alter table households enable row level security;
 alter table members enable row level security;
 alter table categories enable row level security;
 alter table transactions enable row level security;
 
+-- Políticas de Seguridad RLS idempotentes (permiten lectura y escritura anónima con clave pública anon)
+drop policy if exists "Acceso público households" on households;
 create policy "Acceso público households" on households for all using (true) with check (true);
+
+drop policy if exists "Acceso público members" on members;
 create policy "Acceso público members" on members for all using (true) with check (true);
+
+drop policy if exists "Acceso público categories" on categories;
 create policy "Acceso público categories" on categories for all using (true) with check (true);
+
+drop policy if exists "Acceso público transactions" on transactions;
 create policy "Acceso público transactions" on transactions for all using (true) with check (true);
+
+-- Índices de consulta rápida
+create index if not exists idx_transactions_household on transactions (household_id);
+create index if not exists idx_members_household on members (household_id);
+create index if not exists idx_categories_household on categories (household_id);
 `;
 
 export class CloudSyncEngine {
@@ -72,16 +85,20 @@ export class CloudSyncEngine {
       anonKey: '',
       householdCode: '',
       enabled: false,
-      lastSyncTime: null
+      lastSyncTime: null,
+      lastError: null
     };
     this.pollInterval = null;
     this.isSyncing = false;
+    this._onFocus = null;
+    this._onOnline = null;
+    this._onVisibility = null;
   }
 
   init(settings = {}) {
     // Cargar configuración guardada en settings
-    this.config.url = (settings.syncUrl || '').replace(/\/+$/, '');
-    this.config.anonKey = settings.syncKey || '';
+    this.config.url = (settings.syncUrl || '').trim().replace(/\/+$/, '');
+    this.config.anonKey = (settings.syncKey || '').trim();
     this.config.householdCode = (settings.syncCode || '').trim().toUpperCase();
     this.config.enabled = Boolean(this.config.url && this.config.anonKey && this.config.householdCode);
 
@@ -102,8 +119,8 @@ export class CloudSyncEngine {
       const code = params.get('sync_code');
 
       if (url && key && code) {
-        this.config.url = decodeURIComponent(url).replace(/\/+$/, '');
-        this.config.anonKey = decodeURIComponent(key);
+        this.config.url = decodeURIComponent(url).trim().replace(/\/+$/, '');
+        this.config.anonKey = decodeURIComponent(key).trim();
         this.config.householdCode = decodeURIComponent(code).trim().toUpperCase();
         this.config.enabled = true;
 
@@ -114,7 +131,7 @@ export class CloudSyncEngine {
           window.history.replaceState({}, document.title, cleanUrl);
 
           this.app.pwaManager.showToast(`¡Hogar ${this.config.householdCode} vinculado desde el enlace!`);
-          this.syncNow();
+          this.syncNow(true);
         });
       }
     } catch (e) {
@@ -132,16 +149,131 @@ export class CloudSyncEngine {
     this.updateUIStatus();
   }
 
-  getHeaders() {
-    return {
+  getHeaders(includeUpsert = true) {
+    const headers = {
       'apikey': this.config.anonKey,
       'Authorization': `Bearer ${this.config.anonKey}`,
-      'Content-Type': 'application/json',
-      'Prefer': 'resolution=merge-duplicates'
+      'Content-Type': 'application/json'
     };
+    if (includeUpsert) {
+      headers['Prefer'] = 'resolution=merge-duplicates';
+    }
+    return headers;
   }
 
-  // Iniciar ciclo de sincronización automática periódica y por foco
+  // Diagnóstico completo de conexión con Supabase
+  async testConnection(customUrl, customKey, customCode) {
+    const url = (customUrl || this.config.url || '').trim().replace(/\/+$/, '');
+    const key = (customKey || this.config.anonKey || '').trim();
+    const code = (customCode || this.config.householdCode || '').trim().toUpperCase();
+
+    if (!url || !key || !code) {
+      return {
+        ok: false,
+        status: 'CAMPOS_INCOMPLETOS',
+        message: 'Debes completar el Código de Hogar, la Project URL y la Anon Public Key de Supabase.'
+      };
+    }
+
+    if (!url.startsWith('https://')) {
+      return {
+        ok: false,
+        status: 'URL_INVALIDA',
+        message: 'La URL de Supabase debe comenzar con https:// (Ejemplo: https://xyzcompany.supabase.co)'
+      };
+    }
+
+    const testHeaders = {
+      'apikey': key,
+      'Authorization': `Bearer ${key}`,
+      'Content-Type': 'application/json'
+    };
+
+    try {
+      // 1. Probar URL y clave comprobando si responde el endpoint REST
+      let resHouseholds;
+      try {
+        resHouseholds = await fetch(`${url}/rest/v1/households?select=id&limit=1`, {
+          method: 'GET',
+          headers: testHeaders
+        });
+      } catch (netErr) {
+        return {
+          ok: false,
+          status: 'ERROR_RED',
+          message: `No se puede contactar con la URL proporcionada (${netErr.message || 'Error de red'}). Verifica la URL y tu conexión.`
+        };
+      }
+
+      if (resHouseholds.status === 401) {
+        return {
+          ok: false,
+          status: 'CLAVE_INVALIDA',
+          message: 'Error 401 (Unauthorized): La Anon Public Key es inválida o expiró. Cópiala de nuevo desde Supabase (Project Settings > API).'
+        };
+      }
+
+      if (resHouseholds.status === 404) {
+        return {
+          ok: false,
+          status: 'TABLAS_NO_EXISTEN',
+          message: 'Error 404: La tabla "households" NO existe en tu Supabase. Debes ejecutar el Script SQL en Supabase SQL Editor para crear las tablas requeridas.'
+        };
+      }
+
+      // 2. Verificar existencia de las otras 3 tablas
+      const [resMembers, resCategories, resTx] = await Promise.all([
+        fetch(`${url}/rest/v1/members?select=id&limit=1`, { headers: testHeaders }),
+        fetch(`${url}/rest/v1/categories?select=id&limit=1`, { headers: testHeaders }),
+        fetch(`${url}/rest/v1/transactions?select=id&limit=1`, { headers: testHeaders })
+      ]);
+
+      const missing = [];
+      if (!resHouseholds.ok) missing.push('households');
+      if (!resMembers.ok) missing.push('members');
+      if (!resCategories.ok) missing.push('categories');
+      if (!resTx.ok) missing.push('transactions');
+
+      if (missing.length > 0) {
+        return {
+          ok: false,
+          status: 'TABLAS_FALTANTES',
+          message: `Faltan tablas por crear en Supabase: [${missing.join(', ')}]. Pulsa "COPIAR SCRIPT SQL" y ejecútalo en Supabase > SQL Editor.`
+        };
+      }
+
+      // 3. Probar permisos de escritura RLS
+      const upsertHeaders = { ...testHeaders, 'Prefer': 'resolution=merge-duplicates' };
+      const resWrite = await fetch(`${url}/rest/v1/households?on_conflict=id`, {
+        method: 'POST',
+        headers: upsertHeaders,
+        body: JSON.stringify([{ id: code, name: this.app.settings?.householdName || 'Hogar Compartido' }])
+      });
+
+      if (!resWrite.ok) {
+        const errJson = await resWrite.json().catch(() => ({}));
+        return {
+          ok: false,
+          status: 'ERROR_PERMISOS_RLS',
+          message: `Error al escribir en Supabase (${resWrite.status}): ${errJson.message || 'Verifica las políticas RLS ejecutando el Script SQL.'}`
+        };
+      }
+
+      return {
+        ok: true,
+        status: 'EXITO',
+        message: '¡Conexión y tablas 100% verificadas en Supabase! Lectura y escritura activas.'
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        status: 'ERROR_DESCONOCIDO',
+        message: `Error inesperado: ${err.message}`
+      };
+    }
+  }
+
+  // Iniciar ciclo de sincronización automática periódica y por visibilidad
   startAutoSync() {
     this.stopAutoSync();
 
@@ -155,9 +287,22 @@ export class CloudSyncEngine {
       }
     }, 15000);
 
-    // Sincronizar al recuperar foco o volver a estar online
-    window.addEventListener('focus', () => this.syncNow().catch(() => {}));
-    window.addEventListener('online', () => this.syncNow().catch(() => {}));
+    // Escuchadores móviles y de escritorio
+    this._onFocus = () => {
+      if (navigator.onLine && !this.isSyncing) this.syncNow().catch(() => {});
+    };
+    this._onOnline = () => {
+      if (!this.isSyncing) this.syncNow().catch(() => {});
+    };
+    this._onVisibility = () => {
+      if (document.visibilityState === 'visible' && navigator.onLine && !this.isSyncing) {
+        this.syncNow().catch(() => {});
+      }
+    };
+
+    window.addEventListener('focus', this._onFocus);
+    window.addEventListener('online', this._onOnline);
+    document.addEventListener('visibilitychange', this._onVisibility);
   }
 
   stopAutoSync() {
@@ -165,13 +310,16 @@ export class CloudSyncEngine {
       clearInterval(this.pollInterval);
       this.pollInterval = null;
     }
+    if (this._onFocus) window.removeEventListener('focus', this._onFocus);
+    if (this._onOnline) window.removeEventListener('online', this._onOnline);
+    if (this._onVisibility) document.removeEventListener('visibilitychange', this._onVisibility);
   }
 
   // --- SINCRONIZACIÓN COMPLETA BIDIRECCIONAL ---
-  async syncNow() {
+  async syncNow(isManual = false) {
     if (!this.config.enabled || this.isSyncing) return;
     if (!navigator.onLine) {
-      console.log('[Sync] Dispositivo offline, sincronización aplazada');
+      if (isManual) this.app.pwaManager.showToast('⚠️ Sin conexión a internet para sincronizar');
       return;
     }
 
@@ -182,11 +330,22 @@ export class CloudSyncEngine {
       const code = this.config.householdCode;
 
       // 1. Asegurar que existe el hogar en la tabla households
-      await fetch(`${this.config.url}/rest/v1/households`, {
+      const resHousehold = await fetch(`${this.config.url}/rest/v1/households?on_conflict=id`, {
         method: 'POST',
-        headers: this.getHeaders(),
+        headers: this.getHeaders(true),
         body: JSON.stringify([{ id: code, name: this.app.settings?.householdName || 'Hogar Compartido' }])
       });
+
+      if (!resHousehold.ok) {
+        if (resHousehold.status === 404) {
+          throw new Error('Error 404: Las tablas no existen en Supabase. Debes ejecutar el Script SQL.');
+        } else if (resHousehold.status === 401) {
+          throw new Error('Error 401: Anon Key inválida o expirada.');
+        } else {
+          const errData = await resHousehold.json().catch(() => ({}));
+          throw new Error(`Error en households (${resHousehold.status}): ${errData.message || resHousehold.statusText}`);
+        }
+      }
 
       // 2. SUBIR (PUSH) DATOS LOCALES A LA NUBE
       const [localMembers, localCategories, localTransactions] = await Promise.all([
@@ -205,11 +364,15 @@ export class CloudSyncEngine {
           is_active: m.isActive !== false,
           updated_at: new Date().toISOString()
         }));
-        await fetch(`${this.config.url}/rest/v1/members`, {
+        const resM = await fetch(`${this.config.url}/rest/v1/members?on_conflict=id,household_id`, {
           method: 'POST',
-          headers: this.getHeaders(),
+          headers: this.getHeaders(true),
           body: JSON.stringify(payloadMembers)
         });
+        if (!resM.ok) {
+          const errData = await resM.json().catch(() => ({}));
+          throw new Error(`Error subiendo miembros (${resM.status}): ${errData.message || resM.statusText}`);
+        }
       }
 
       if (localCategories.length > 0) {
@@ -225,11 +388,15 @@ export class CloudSyncEngine {
           display_order: c.displayOrder || 0,
           updated_at: new Date().toISOString()
         }));
-        await fetch(`${this.config.url}/rest/v1/categories`, {
+        const resC = await fetch(`${this.config.url}/rest/v1/categories?on_conflict=id,household_id`, {
           method: 'POST',
-          headers: this.getHeaders(),
+          headers: this.getHeaders(true),
           body: JSON.stringify(payloadCategories)
         });
+        if (!resC.ok) {
+          const errData = await resC.json().catch(() => ({}));
+          throw new Error(`Error subiendo categorías (${resC.status}): ${errData.message || resC.statusText}`);
+        }
       }
 
       if (localTransactions.length > 0) {
@@ -248,82 +415,97 @@ export class CloudSyncEngine {
           created_at: t.createdAt || Date.now(),
           updated_at: new Date().toISOString()
         }));
-        await fetch(`${this.config.url}/rest/v1/transactions`, {
+        const resT = await fetch(`${this.config.url}/rest/v1/transactions?on_conflict=id,household_id`, {
           method: 'POST',
-          headers: this.getHeaders(),
+          headers: this.getHeaders(true),
           body: JSON.stringify(payloadTx)
         });
+        if (!resT.ok) {
+          const errData = await resT.json().catch(() => ({}));
+          throw new Error(`Error subiendo movimientos (${resT.status}): ${errData.message || resT.statusText}`);
+        }
       }
 
       // 3. BAJAR (PULL) DATOS ACTUALIZADOS DE LA NUBE
       const [resMembers, resCategories, resTx] = await Promise.all([
         fetch(`${this.config.url}/rest/v1/members?household_id=eq.${encodeURIComponent(code)}&select=*`, {
-          headers: this.getHeaders()
+          headers: this.getHeaders(false)
         }),
         fetch(`${this.config.url}/rest/v1/categories?household_id=eq.${encodeURIComponent(code)}&select=*`, {
-          headers: this.getHeaders()
+          headers: this.getHeaders(false)
         }),
         fetch(`${this.config.url}/rest/v1/transactions?household_id=eq.${encodeURIComponent(code)}&select=*`, {
-          headers: this.getHeaders()
+          headers: this.getHeaders(false)
         })
       ]);
 
-      if (resMembers.ok && resCategories.ok && resTx.ok) {
-        const [cloudMembers, cloudCategories, cloudTx] = await Promise.all([
-          resMembers.json(),
-          resCategories.json(),
-          resTx.json()
-        ]);
+      if (!resMembers.ok || !resCategories.ok || !resTx.ok) {
+        throw new Error('Error al descargar datos de Supabase. Verifica que las tablas existan.');
+      }
 
-        // Guardar miembros de la nube en IndexedDB local
-        for (const m of cloudMembers) {
-          await db.put('members', {
-            id: m.id,
-            name: m.name,
-            avatar: m.avatar,
-            color: m.color,
-            isActive: m.is_active,
-            createdAt: m.created_at || new Date().toISOString()
-          });
-        }
+      const [cloudMembers, cloudCategories, cloudTx] = await Promise.all([
+        resMembers.json(),
+        resCategories.json(),
+        resTx.json()
+      ]);
 
-        // Guardar categorías de la nube en IndexedDB local
-        for (const c of cloudCategories) {
-          await db.put('categories', {
-            id: c.id,
-            name: c.name,
-            icon: c.icon,
-            color: c.color,
-            monthlyBudget: Number(c.monthly_budget) || 0,
-            isSystem: Boolean(c.is_system),
-            isArchived: Boolean(c.is_archived),
-            displayOrder: Number(c.display_order) || 0
-          });
-        }
+      // Guardar miembros de la nube en IndexedDB local
+      for (const m of cloudMembers) {
+        await db.put('members', {
+          id: m.id,
+          name: m.name,
+          avatar: m.avatar,
+          color: m.color,
+          isActive: m.is_active,
+          createdAt: m.created_at || new Date().toISOString()
+        });
+      }
 
-        // Guardar transacciones de la nube en IndexedDB local
-        for (const t of cloudTx) {
-          await db.put('transactions', sanitizeTransaction({
-            id: t.id,
-            type: t.type,
-            amount: Number(t.amount) || 0,
-            categoryId: t.category_id,
-            paidByMemberId: t.paid_by_member_id,
-            splitType: t.split_type,
-            beneficiaryMemberIds: t.beneficiary_member_ids,
-            date: t.date,
-            note: t.note,
-            isSettlement: t.is_settlement,
-            createdAt: Number(t.created_at) || Date.now()
-          }));
-        }
+      // Guardar categorías de la nube en IndexedDB local
+      for (const c of cloudCategories) {
+        await db.put('categories', {
+          id: c.id,
+          name: c.name,
+          icon: c.icon,
+          color: c.color,
+          monthlyBudget: Number(c.monthly_budget) || 0,
+          isSystem: Boolean(c.is_system),
+          isArchived: Boolean(c.is_archived),
+          displayOrder: Number(c.display_order) || 0
+        });
+      }
 
-        this.config.lastSyncTime = new Date();
-        await this.app.refreshData();
-        this.app.renderCurrentView();
+      // Guardar transacciones de la nube en IndexedDB local
+      for (const t of cloudTx) {
+        await db.put('transactions', sanitizeTransaction({
+          id: t.id,
+          type: t.type,
+          amount: Number(t.amount) || 0,
+          categoryId: t.category_id,
+          paidByMemberId: t.paid_by_member_id,
+          splitType: t.split_type,
+          beneficiaryMemberIds: t.beneficiary_member_ids,
+          date: t.date,
+          note: t.note,
+          isSettlement: t.is_settlement,
+          createdAt: Number(t.created_at) || Date.now()
+        }));
+      }
+
+      this.config.lastSyncTime = new Date();
+      this.config.lastError = null;
+      await this.app.refreshData();
+      this.app.renderCurrentView();
+
+      if (isManual) {
+        this.app.pwaManager.showToast(`☁️ Sincronizado: ${cloudTx.length} movimientos al día`);
       }
     } catch (err) {
+      this.config.lastError = err.message;
       console.warn('[Sync] Error durante la sincronización:', err);
+      if (isManual) {
+        this.app.pwaManager.showToast(`⚠️ ${err.message}`);
+      }
     } finally {
       this.isSyncing = false;
       this.updateUIStatus();
@@ -334,9 +516,9 @@ export class CloudSyncEngine {
   async pushTransaction(tx) {
     if (!this.config.enabled || !navigator.onLine) return;
     try {
-      await fetch(`${this.config.url}/rest/v1/transactions`, {
+      const res = await fetch(`${this.config.url}/rest/v1/transactions?on_conflict=id,household_id`, {
         method: 'POST',
-        headers: this.getHeaders(),
+        headers: this.getHeaders(true),
         body: JSON.stringify([{
           id: tx.id,
           household_id: this.config.householdCode,
@@ -353,8 +535,37 @@ export class CloudSyncEngine {
           updated_at: new Date().toISOString()
         }])
       });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        console.error('[Sync pushTransaction error]', res.status, errJson);
+        this.app.pwaManager.showToast(`⚠️ Error en nube (${res.status}): ${errJson.message || 'No se pudo subir'}`);
+        return false;
+      }
+      this.config.lastSyncTime = new Date();
+      this.config.lastError = null;
+      this.updateUIStatus();
+      return true;
     } catch (e) {
       console.warn('[Sync] Error al enviar transacción:', e);
+      return false;
+    }
+  }
+
+  // Eliminación de un movimiento en la nube
+  async deleteTransaction(id) {
+    if (!this.config.enabled || !navigator.onLine) return;
+    try {
+      const res = await fetch(`${this.config.url}/rest/v1/transactions?id=eq.${encodeURIComponent(id)}&household_id=eq.${encodeURIComponent(this.config.householdCode)}`, {
+        method: 'DELETE',
+        headers: this.getHeaders(false)
+      });
+      if (res.ok) {
+        this.config.lastSyncTime = new Date();
+        this.updateUIStatus();
+      }
+    } catch (e) {
+      console.warn('[Sync] Error al eliminar transacción en la nube:', e);
     }
   }
 
@@ -372,23 +583,54 @@ export class CloudSyncEngine {
 
   updateUIStatus() {
     const badge = document.getElementById('sync-status-badge');
-    if (!badge) return;
+    const headerBtn = document.getElementById('btn-header-sync');
 
     if (!this.config.enabled) {
-      badge.innerHTML = '⚪ Modo Local (Solo este móvil)';
-      badge.style.color = 'var(--ink-secondary)';
-      badge.style.background = 'var(--surface-muted)';
+      if (badge) {
+        badge.innerHTML = '⚪ Modo Local (Solo este móvil)';
+        badge.style.color = 'var(--ink-secondary)';
+        badge.style.background = 'var(--surface-muted)';
+        badge.style.borderColor = 'var(--border-color)';
+      }
+      if (headerBtn) {
+        headerBtn.innerHTML = '⚪ Local';
+        headerBtn.title = 'Modo Local (Toca para ir a Ajustes y vincular Supabase)';
+      }
     } else if (this.isSyncing) {
-      badge.innerHTML = '🔄 Sincronizando con la nube...';
-      badge.style.color = '#0284C7';
-      badge.style.background = '#E0F2FE';
+      if (badge) {
+        badge.innerHTML = '🔄 Sincronizando con la nube...';
+        badge.style.color = '#0284C7';
+        badge.style.background = '#E0F2FE';
+        badge.style.borderColor = '#0284C7';
+      }
+      if (headerBtn) {
+        headerBtn.innerHTML = '🔄 Sync...';
+      }
+    } else if (this.config.lastError) {
+      if (badge) {
+        badge.innerHTML = `⚠️ <b>Error de Sincronización</b><br><small style="font-weight: normal; font-size: 11px;">${this.config.lastError}</small>`;
+        badge.style.color = '#DC2626';
+        badge.style.background = '#FEE2E2';
+        badge.style.borderColor = '#DC2626';
+      }
+      if (headerBtn) {
+        headerBtn.innerHTML = '⚠️ Error';
+        headerBtn.title = `Error: ${this.config.lastError} (Toca para reintentar)`;
+      }
     } else {
       const timeStr = this.config.lastSyncTime 
         ? `(${this.config.lastSyncTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })})` 
         : '';
-      badge.innerHTML = `☁️ Conectado: <b>${this.config.householdCode}</b> ${timeStr}`;
-      badge.style.color = '#059669';
-      badge.style.background = '#DCFCE7';
+      if (badge) {
+        badge.innerHTML = `☁️ Conectado: <b>${this.config.householdCode}</b> ${timeStr}`;
+        badge.style.color = '#059669';
+        badge.style.background = '#DCFCE7';
+        badge.style.borderColor = '#059669';
+      }
+      if (headerBtn) {
+        headerBtn.innerHTML = '☁️ Sinc';
+        headerBtn.title = `Conectado a ${this.config.householdCode}. Toca para sincronizar ahora.`;
+      }
     }
   }
 }

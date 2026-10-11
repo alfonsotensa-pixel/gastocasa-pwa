@@ -107,6 +107,19 @@ class AppController {
     if (userSelectorBtn) {
       userSelectorBtn.addEventListener('click', () => this.cycleActiveUser());
     }
+
+    // Botón de sincronización rápida en el header
+    const headerSyncBtn = document.getElementById('btn-header-sync');
+    if (headerSyncBtn) {
+      headerSyncBtn.addEventListener('click', () => {
+        if (!this.syncEngine?.config.enabled) {
+          this.switchTab('settings');
+          this.pwaManager.showToast('Configura Supabase en Ajustes para activar la sincronización');
+        } else {
+          this.syncEngine.syncNow(true);
+        }
+      });
+    }
   }
 
   switchTab(tabName) {
@@ -589,6 +602,9 @@ class AppController {
 
   async deleteTransaction(id) {
     await db.delete('transactions', id);
+    if (this.syncEngine?.config.enabled) {
+      this.syncEngine.deleteTransaction(id);
+    }
     await this.refreshData();
     this.renderCurrentView();
     this.pwaManager.showToast('Gasto eliminado');
@@ -874,6 +890,8 @@ class AppController {
         <div id="sync-status-badge" style="margin-bottom: 12px; padding: 10px 14px; border-radius: var(--radius-micro); font-size: 12px; font-weight: 700; text-align: center; border: var(--border-solid);">
           <!-- Actualizado por syncEngine -->
         </div>
+        <div id="sync-diagnostic-result" style="display: none; padding: 10px 14px; border-radius: var(--radius-micro); font-size: 12px; margin-bottom: 12px; border: var(--border-solid); line-height: 1.4;">
+        </div>
         <p style="font-size: 12px; color: var(--ink-secondary); margin-bottom: 12px; line-height: 1.5;">
           Conecta una base de datos gratuita de <b>Supabase</b> para que todos los teléfonos del hogar compartan y sincronicen sus gastos en tiempo real.
         </p>
@@ -894,7 +912,9 @@ class AppController {
         </div>
 
         <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 10px;">
-          <button class="b-btn btn-emerald" id="btn-save-sync">☁️ GUARDAR Y SINCRONIZAR AHORA</button>
+          <button class="b-btn" id="btn-test-sync" style="background: #F1F5F9; border-color: #0284C7; color: #0284C7; font-weight: 800;">🔍 PROBAR Y VERIFICAR CONEXIÓN</button>
+          <button class="b-btn btn-emerald" id="btn-save-sync">☁️ GUARDAR Y ACTIVAR SINCRONIZACIÓN</button>
+          ${syncConfig.enabled ? '<button class="b-btn" id="btn-force-sync" style="background: #E0F2FE; color: #0369A1; border-color: #0284C7;">🔄 FORZAR ACTUALIZACIÓN AHORA</button>' : ''}
           <button class="b-btn" id="btn-share-sync" style="background: var(--cyan-active);">🔗 COPIAR ENLACE PARA OTROS MÓVILES (1 CLIC)</button>
           <button class="b-btn btn-secondary" id="btn-copy-sql">📜 COPIAR SCRIPT SQL PARA SUPABASE</button>
           ${syncConfig.enabled ? '<button class="b-btn btn-coral" id="btn-disconnect-sync">✕ DESCONECTAR DE LA NUBE</button>' : ''}
@@ -945,6 +965,49 @@ class AppController {
     // Actualizar estado del badge de sync
     this.syncEngine?.updateUIStatus();
 
+    // Botón de prueba y diagnóstico de conexión
+    const btnTestSync = document.getElementById('btn-test-sync');
+    if (btnTestSync) {
+      btnTestSync.onclick = async () => {
+        const code = document.getElementById('setting-sync-code')?.value.trim().toUpperCase();
+        const url = document.getElementById('setting-sync-url')?.value.trim().replace(/\/+$/, '');
+        const key = document.getElementById('setting-sync-key')?.value.trim();
+        const diagBox = document.getElementById('sync-diagnostic-result');
+
+        if (diagBox) {
+          diagBox.style.display = 'block';
+          diagBox.style.background = '#EFF6FF';
+          diagBox.style.color = '#1D4ED8';
+          diagBox.style.borderColor = '#3B82F6';
+          diagBox.innerHTML = '⏳ <b>Verificando conexión y tablas en Supabase...</b><br>Comprobando endpoint, claves y permisos.';
+        }
+
+        const result = await this.syncEngine.testConnection(url, key, code);
+
+        if (diagBox) {
+          if (result.ok) {
+            diagBox.style.background = '#DCFCE7';
+            diagBox.style.color = '#15803D';
+            diagBox.style.borderColor = '#16A34A';
+            diagBox.innerHTML = `✅ <b>Verificación Exitosa:</b><br>${result.message}`;
+          } else {
+            diagBox.style.background = '#FEE2E2';
+            diagBox.style.color = '#B91C1C';
+            diagBox.style.borderColor = '#DC2626';
+            diagBox.innerHTML = `❌ <b>Problema Detectado (${result.status}):</b><br>${result.message}`;
+          }
+        }
+      };
+    }
+
+    // Forzar sincronización manual
+    const btnForceSync = document.getElementById('btn-force-sync');
+    if (btnForceSync) {
+      btnForceSync.onclick = async () => {
+        await this.syncEngine.syncNow(true);
+      };
+    }
+
     // Guardar configuración de sync
     const btnSaveSync = document.getElementById('btn-save-sync');
     if (btnSaveSync) {
@@ -965,8 +1028,8 @@ class AppController {
 
         await this.syncEngine.saveConfigToSettings();
         this.syncEngine.startAutoSync();
-        this.pwaManager.showToast('Configuración en la nube guardada. Sincronizando...');
-        await this.syncEngine.syncNow();
+        this.pwaManager.showToast('Configuración guardada. Sincronizando...');
+        await this.syncEngine.syncNow(true);
         this.renderSettingsView();
       };
     }
