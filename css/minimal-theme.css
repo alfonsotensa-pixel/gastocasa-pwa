@@ -1,0 +1,476 @@
+/* ---------- Filtros y buscador de gastos ---------- */
+.tx-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: #FFFFFF;
+  border-radius: var(--radius-micro);
+  box-shadow: var(--shadow-offset);
+  padding: 14px;
+  margin-bottom: 16px;
+}
+.tx-filters-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.tx-filters .form-input, .tx-filters .form-select {
+  padding: 10px 12px;
+  font-size: 13px;
+  min-width: 0;
+}
+.tx-filters .form-label { margin-bottom: 4px; }
+.tx-date-field { min-width: 0; }
+.tx-filters-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.tx-results-summary { font-size: 12px; font-weight: 600; color: var(--ink-secondary); }
+
+.tx-quick-chips { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
+
+.tx-total-card {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--navy-primary);
+  color: #FFFFFF;
+  border-radius: 20px;
+  box-shadow: var(--shadow-offset);
+  padding: 18px 20px;
+  margin-bottom: 16px;
+}
+.tx-total-label { font-size: 11px; font-weight: 500; color: #CBD5E1; margin-bottom: 4px; }
+.tx-total-value { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.tx-total-count { font-size: 11px; font-weight: 500; color: #94A3B8; text-align: right; max-width: 45%; }
+.tx-quick-chip {
+  flex: 1 0 auto;
+  background: var(--surface-muted);
+  color: var(--ink-primary);
+  border: none;
+  border-radius: 999px;
+  padding: 9px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.tx-quick-chip.is-active { background: var(--navy-primary); color: #FFFFFF; }
+.tx-quick-chip:active { transform: scale(0.97); }
+
+/* ==========================================================================
+   TEMA: MINIMALISMO FUNCIONAL (Clean / Minimal UI)
+   - Abundante espacio negativo, tipografía clara, tarjetas suaves
+   - Color reservado para categorías y alertas
+   - Paleta base: grises neutros + azul oscuro
+   Se carga DESPUÉS de app.css y sobrescribe el estilo brutalista.
+   ========================================================================== */
+
+:root {
+  --border-w: 1px;
+  --border-color: #E5E7EB;
+  --border-solid: 1px solid #E5E7EB;
+  --border-dashed: 1px dashed #CBD5E1;
+
+  --shadow-offset: 0 1px 2px rgba(15, 23, 42, 0.04), 0 6px 18px rgba(15, 23, 42, 0.05);
+  --shadow-hover: 0 2px 4px rgba(15, 23, 42, 0.06), 0 8px 24px rgba(15, 23, 42, 0.08);
+  --shadow-active: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow-lg: 0 10px 30px rgba(15, 23, 42, 0.12);
+
+  --radius-micro: 16px;
+  --radius-sm: 10px;
+
+  --bg-canvas: #F3F4F6;
+  --surface-card: #FFFFFF;
+  --surface-muted: #F1F5F9;
+  --surface-inset: #F8FAFC;
+
+  --ink-primary: #111827;
+  --ink-secondary: #4B5563;
+  --ink-muted: #6B7280;
+
+  --font-mono: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --tap-transition: transform 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+body {
+  background-color: var(--bg-canvas);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+
+/* Espacio negativo generoso */
+.main-container { padding: 20px 16px 24px; }
+.b-card { padding: 18px; margin-bottom: 16px; border: none; }
+.metrics-grid { gap: 12px; margin-bottom: 16px; }
+
+/* ---------- Cabecera clara ---------- */
+.app-header {
+  background-color: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: var(--ink-primary);
+  border-bottom: 1px solid #E5E7EB;
+}
+.brand-badge {
+  background: transparent;
+  color: var(--navy-primary);
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  text-transform: none;
+}
+.brand-dot { background-color: var(--navy-primary); border: none; width: 8px; height: 8px; }
+.user-selector-btn {
+  background: var(--surface-muted);
+  border: none;
+  box-shadow: none;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-primary);
+}
+.btn-install-pwa {
+  background: var(--navy-primary);
+  border: none;
+  box-shadow: none;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* ---------- Tarjetas ---------- */
+.b-card, .metric-box, .date-pager, .debt-card, .category-card,
+.tx-item, .touch-projection-card, .chart-container {
+  border: none;
+  border-radius: var(--radius-micro);
+  box-shadow: var(--shadow-offset);
+}
+.b-card-header {
+  border-bottom: none;
+  padding-bottom: 0;
+  margin-bottom: 14px;
+}
+.b-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--ink-secondary);
+}
+
+/* ---------- Selector de periodo (segmentado suave) ---------- */
+.time-segment-control {
+  background: #E5E7EB;
+  border: none;
+  border-radius: 999px;
+  padding: 4px;
+  box-shadow: none;
+  margin-bottom: 14px;
+}
+.time-segment-btn {
+  color: var(--ink-secondary);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px 4px;
+}
+.time-segment-btn.is-active {
+  background: #FFFFFF;
+  color: var(--navy-primary);
+  border: none;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+}
+
+.date-pager { padding: 8px 12px; margin-bottom: 16px; }
+.pager-btn {
+  background: var(--surface-muted);
+  border: none;
+  box-shadow: none;
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  font-size: 11px;
+  color: var(--navy-primary);
+}
+.pager-label {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: none;
+  color: var(--ink-primary);
+}
+
+/* ---------- Métricas ---------- */
+.metric-box { padding: 14px 16px; }
+.metric-label {
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  opacity: 1;
+  color: var(--ink-muted);
+  margin-bottom: 4px;
+}
+.metric-value {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--ink-primary);
+}
+/* Tarjeta hero en azul oscuro */
+.metric-box.full-width {
+  background: var(--navy-primary);
+  color: #FFFFFF;
+  padding: 20px;
+  border-radius: 20px;
+}
+.metric-box.full-width .metric-label { color: #CBD5E1; }
+.metric-box.full-width .metric-value { font-size: 32px; color: #FFFFFF; font-weight: 700; }
+.metric-box.full-width .metric-sub { color: #94A3B8 !important; }
+
+/* ---------- Gráfico ---------- */
+.touch-projection-card {
+  background: #FFFFFF;
+  color: var(--ink-primary);
+  padding: 12px 16px;
+  margin-bottom: 10px;
+}
+.projection-label { color: var(--ink-muted); font-size: 12px; font-weight: 500; }
+.projection-value { color: var(--navy-primary); font-size: 16px; font-weight: 700; }
+.chart-container {
+  background: #FFFFFF;
+  padding: 12px 8px 6px;
+  margin-bottom: 16px;
+}
+.chart-bar { rx: 4px; ry: 4px; }
+.chart-bar:active, .chart-bar.is-active {
+  stroke: none !important;
+  fill: var(--cyan-active) !important;
+}
+
+/* ---------- Desglose por categoría (color solo aquí) ---------- */
+.category-breakdown-list { gap: 14px; }
+.cat-progress-header { font-size: 12px; font-weight: 500; }
+.cat-progress-bar-bg {
+  height: 6px;
+  border: none;
+  border-radius: 999px;
+  background: #E5E7EB;
+}
+.cat-progress-fill { border-right: none; border-radius: 999px; }
+
+/* ---------- Lista de transacciones ---------- */
+.transactions-list { gap: 10px; }
+.tx-item {
+  height: 64px;
+  padding: 0 14px;
+  background: #FFFFFF;
+}
+.tx-item:active { transform: scale(0.99); box-shadow: var(--shadow-active); }
+.tx-item.is-settlement { background: #FFFFFF; border: 1px dashed #CBD5E1; box-shadow: none; }
+.tx-icon-badge {
+  width: 40px;
+  height: 40px;
+  border: none;
+  box-shadow: none;
+  border-radius: 12px;
+  background: var(--surface-muted);
+}
+.tx-title { font-size: 14px; font-weight: 600; }
+.tx-meta { font-size: 11px; color: var(--ink-muted); }
+.tx-member-tag {
+  background: var(--surface-muted);
+  border: none;
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: none;
+}
+.tx-amount { color: var(--ink-primary); font-size: 14px; font-weight: 700; }
+.tx-item.is-settlement .tx-amount { color: var(--ink-secondary); }
+.tx-split-tag { font-size: 10px; font-weight: 500; }
+
+.filter-chip {
+  border: none;
+  border-radius: 999px;
+  box-shadow: none;
+  background: #FFFFFF;
+}
+.filter-chip.is-active { background: var(--navy-primary); color: #FFFFFF; }
+
+/* ---------- Deudas (alerta: único uso de color en saldos) ---------- */
+.debt-card { padding: 16px; }
+.debt-header { font-size: 14px; font-weight: 600; }
+.debt-detail { color: var(--ink-muted); }
+.btn-settle {
+  background: var(--navy-primary);
+  border: none;
+  box-shadow: none;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: none;
+  padding: 10px 14px;
+}
+
+/* ---------- Categorías ---------- */
+.categories-grid { gap: 12px; }
+.category-card { padding: 14px; min-height: 100px; }
+.cat-emoji {
+  border: none !important;
+  border-radius: 12px;
+  background: var(--surface-muted);
+  width: 36px;
+  height: 36px;
+}
+.cat-name { font-size: 13px; font-weight: 600; margin-top: 10px; }
+.btn-action-icon {
+  border: none;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  padding: 4px 10px;
+  font-weight: 600;
+}
+
+/* ---------- FAB y navegación ---------- */
+.fab-quick-add {
+  background: var(--navy-primary);
+  border: none;
+  border-radius: 50%;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.28);
+  width: 56px;
+  height: 56px;
+  font-weight: 400;
+}
+.fab-quick-add:active { transform: scale(0.95); box-shadow: 0 4px 10px rgba(15, 23, 42, 0.25); }
+
+.bottom-nav {
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-top: 1px solid #E5E7EB;
+}
+.nav-item {
+  border-right: none;
+  color: var(--ink-muted);
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: none;
+}
+.nav-item.is-active {
+  background: transparent;
+  color: var(--navy-primary);
+  border-top: none;
+  font-weight: 700;
+}
+
+/* ---------- Modales / Bottom sheet ---------- */
+.modal-overlay { background-color: rgba(17, 24, 39, 0.45); }
+.bottom-sheet {
+  border: none;
+  border-top-left-radius: 24px;
+  border-top-right-radius: 24px;
+  box-shadow: 0 -10px 40px rgba(15, 23, 42, 0.18);
+  padding: 20px 20px calc(28px + var(--safe-bottom));
+}
+.sheet-header { border-bottom: none; padding-bottom: 4px; margin-bottom: 16px; }
+.sheet-title { font-size: 16px; font-weight: 700; text-transform: none; color: var(--ink-primary); }
+.btn-close-sheet {
+  border: none;
+  box-shadow: none;
+  border-radius: 50%;
+  background: var(--surface-muted);
+  width: 32px;
+  height: 32px;
+}
+
+.amount-input-box {
+  background: var(--surface-muted);
+  border: none;
+  border-radius: 16px;
+  box-shadow: none;
+  padding: 14px 16px;
+}
+.amount-currency { color: var(--ink-muted); }
+.amount-field { color: var(--ink-primary); }
+.amount-field::placeholder { color: #9CA3AF; }
+
+.category-chips-grid { gap: 8px; }
+.category-chip-btn {
+  border: 1px solid #E5E7EB;
+  border-radius: 14px;
+  box-shadow: none;
+  padding: 10px 4px;
+  font-weight: 500;
+}
+.category-chip-btn.is-selected {
+  background: var(--navy-primary);
+  color: #FFFFFF;
+  border-color: var(--navy-primary);
+  box-shadow: none;
+}
+
+.split-selector {
+  border: none;
+  background: #E5E7EB;
+  border-radius: 999px;
+  padding: 4px;
+}
+.split-option-btn { border-radius: 999px; font-size: 11px; font-weight: 600; text-transform: none; padding: 8px 4px; }
+.split-option-btn.is-active { background: #FFFFFF; color: var(--navy-primary); box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12); }
+
+/* ---------- Botones y formularios ---------- */
+.b-btn {
+  background: var(--navy-primary);
+  border: none;
+  border-radius: 14px;
+  box-shadow: none;
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: none;
+  padding: 14px 16px;
+}
+.b-btn:active { transform: scale(0.98); box-shadow: none; }
+.b-btn.btn-coral, .b-btn.btn-emerald { background: var(--navy-primary); }
+.b-btn.btn-secondary { background: var(--surface-muted); color: var(--ink-primary); }
+
+.form-label {
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: none;
+  color: var(--ink-muted);
+  margin-bottom: 6px;
+}
+.form-group { margin-bottom: 14px; }
+.form-input, .form-select {
+  border: 1px solid #E5E7EB;
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: #FFFFFF;
+}
+.form-input:focus, .form-select:focus {
+  border-color: var(--navy-primary);
+  box-shadow: 0 0 0 3px rgba(28, 37, 65, 0.1);
+}
+
+/* ---------- Estado vacío y avisos ---------- */
+.empty-state { border: 1px dashed #CBD5E1; border-radius: var(--radius-micro); padding: 32px 16px; background: transparent; }
+.empty-state-text { font-weight: 500; }
+.toast-notice {
+  background: var(--navy-primary);
+  border: none;
+  border-radius: 999px;
+  box-shadow: var(--shadow-lg);
+  font-weight: 600;
+  padding: 10px 18px;
+}
+
+/* ---------- Neutralizar estilos inline brutalistas generados por JS ---------- */
+[style*="1px 1px 0px #000"] {
+  box-shadow: none !important;
+  border: none !important;
+  border-radius: 12px !important;
+  background-color: var(--surface-muted) !important;
+}
+[style*="border-style: dashed"] { border-style: dashed !important; border-width: 1px !important; }

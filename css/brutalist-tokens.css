@@ -1,0 +1,69 @@
+/* Neo-Brutalist Design Tokens - Paleta Gris & Azul Oscuro con Acentos de Alto Contraste */
+:root {
+  /* Geometría Micro-Brutalista Móvil */
+  --border-w: 2px;
+  --border-color: #0B132B;
+  --border-solid: var(--border-w) solid var(--border-color);
+  --border-dashed: var(--border-w) dashed var(--border-color);
+  
+  --shadow-offset: 2px 2px 0px #0B132B;
+  --shadow-hover: 3px 3px 0px #0B132B;
+  --shadow-active: 1px 1px 0px #0B132B;
+  --shadow-lg: 4px 4px 0px #0B132B;
+  --radius-micro: 3px;
+  --radius-pill: 9999px;
+
+  /* Paleta Técnica (WCAG 2.1 AA/AAA >5:1) */
+  --bg-canvas: #F1F5F9;          /* Gris técnico base (Slate 100) */
+  --surface-card: #FFFFFF;       /* Superficie pura para tarjetas */
+  --surface-muted: #E2E8F0;      /* Gris intermedio para divisores y fondo de badges */
+  --surface-inset: #F8FAFC;      /* Fondo de inputs y campos */
+  
+  /* Tonos Azules Profundos */
+  --navy-deep: #0B132B;          /* Obsidian Navy: 16.2:1 vs #FFF (Bordes y texto máximo) */
+  --navy-primary: #1C2541;       /* Navy Steel: Botones principales y cabeceras */
+  --navy-secondary: #3A506B;     /* Slate Cobalt: Pestañas secundarias y acentos */
+
+  /* Tipografía */
+  --ink-primary: #0B132B;        /* Texto de máximo contraste */
+  --ink-secondary: #334155;      /* Slate 700: 7.8:1 vs #FFF (Metadatos y labels) */
+  --ink-muted: #64748B;          /* Slate 500: Subtítulos técnicos */
+  --ink-inverse: #FFFFFF;        /* Texto sobre botones oscuros */
+
+  /* Acentos Funcionales de Alta Legibilidad */
+  --emerald-income: #059669;     /* Verde Esmeralda: Ingresos y deudas saldadas */
+  --emerald-bg: #DCFCE7;
+  --coral-expense: #E11D48;      /* Coral Intenso: Gastos y saldos deudores */
+  --coral-bg: #FFE4E6;
+  --amber-warning: #D97706;      /* Ámbar: Presupuestos cerca del límite */
+  --amber-bg: #FEF3C7;
+  --cyan-active: #0284C7;        /* Azul Cian: Selecciones activas y estados táctiles */
+  --cyan-bg: #E0F2FE;
+
+  /* Tipografías Nativas y Tabulares */
+  --font-mono: 'SF Mono', ui-monospace, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+
+  /* Safe Area Insets Móviles (iPhone Notch y Dynamic Island) */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+
+  /* Transición táctil neo-brutalista */
+  --tap-transition: transform 0.08s ease, box-shadow 0.08s ease;
+}
+
+/* Modo Alto Contraste Oscuro Opcional */
+[data-theme="dark"] {
+  --bg-canvas: #0B132B;
+  --surface-card: #1C2541;
+  --surface-muted: #3A506B;
+  --surface-inset: #121E36;
+  --ink-primary: #F8FAFC;
+  --ink-secondary: #CBD5E1;
+  --border-color: #38BDF8;
+  --border-solid: var(--border-w) solid #38BDF8;
+  --shadow-offset: 2px 2px 0px #38BDF8;
+  --shadow-active: 1px 1px 0px #38BDF8;
+}

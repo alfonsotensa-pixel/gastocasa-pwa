@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" fill="#0B132B"/>
+  <!-- Card base neo-brutalista con sombra dura -->
+  <rect x="74" y="74" width="384" height="384" rx="10" fill="#1C2541" stroke="#38BDF8" stroke-width="8"/>
+  <rect x="64" y="64" width="384" height="384" rx="10" fill="#F1F5F9" stroke="#0B132B" stroke-width="12"/>
+  <!-- Icono de Casa Brutalista -->
+  <path d="M256 120 L120 230 L152 230 L152 384 L212 384 L212 290 L300 290 L300 384 L360 384 L360 230 L392 230 Z" 
+        fill="#1C2541" stroke="#0B132B" stroke-width="10" stroke-linejoin="round"/>
+  <!-- Símbolo de Moneda en el centro -->
+  <circle cx="256" cy="225" r="38" fill="#38BDF8" stroke="#0B132B" stroke-width="8"/>
+  <text x="256" y="240" font-family="monospace, sans-serif" font-size="44" font-weight="900" fill="#0B132B" text-anchor="middle">$</text>
+  <!-- Barras de gráficos decorativas inferiores -->
+  <rect x="110" y="405" width="80" height="20" rx="3" fill="#E11D48" stroke="#0B132B" stroke-width="5"/>
+  <rect x="206" y="405" width="105" height="20" rx="3" fill="#059669" stroke="#0B132B" stroke-width="5"/>
+  <rect x="327" y="405" width="70" height="20" rx="3" fill="#0284C7" stroke="#0B132B" stroke-width="5"/>
+</svg>

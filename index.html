@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>GastoCasa // Brutal - Control de Gastos del Hogar</title>
+  
+  <!-- PWA & Mobile Meta Tags -->
+  <link rel="manifest" href="./manifest.webmanifest">
+  <meta name="theme-color" content="#0B132B">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="GastoCasa">
+  <link rel="apple-touch-icon" href="./icons/icon-192.svg">
+  <link rel="icon" type="image/svg+xml" href="./icons/icon-192.svg">
+
+  <!-- Estilos Neo-Brutalistas -->
+  <link rel="stylesheet" href="./css/brutalist-tokens.css">
+  <link rel="stylesheet" href="./css/app.css">
+  <link rel="stylesheet" href="./css/minimal-theme.css">
+</head>
+<body>
+
+  <!-- Cabecera Fija Superior Brutalista -->
+  <header class="app-header">
+    <div class="brand-badge">
+      <span class="brand-dot"></span>
+      <span>GASTOCASA // BRUTAL</span>
+    </div>
+
+    <div class="header-actions">
+      <button class="user-selector-btn" id="btn-header-user" title="Cambiar usuario activo">
+        👤 Laura
+      </button>
+      <button class="btn-install-pwa" id="btn-install-pwa" title="Instalar en pantalla de inicio">
+        📲 INSTALAR
+      </button>
+    </div>
+  </header>
+
+  <!-- Contenedor Principal de la App -->
+  <main class="main-container">
+
+    <!-- 1. VISTA: DASHBOARD ANALÍTICO -->
+    <section class="view-section is-active" id="view-dashboard">
+      <!-- Selector de Periodo: SEMANA | MES | AÑO -->
+      <div class="time-segment-control">
+        <button class="time-segment-btn" data-period="week">SEMANA</button>
+        <button class="time-segment-btn is-active" data-period="month">MES</button>
+        <button class="time-segment-btn" data-period="year">AÑO</button>
+      </div>
+
+      <!-- Paginador de Fechas -->
+      <div class="date-pager">
+        <button class="pager-btn" id="btn-period-prev" title="Periodo anterior">◄</button>
+        <span class="pager-label" id="period-display-label">OCTUBRE 2026</span>
+        <button class="pager-btn" id="btn-period-next" title="Periodo siguiente">►</button>
+      </div>
+
+      <!-- Cuadrícula de Métricas Clave -->
+      <div class="metrics-grid">
+        <div class="metric-box full-width">
+          <div class="metric-label">TOTAL GASTADO EN EL PERIODO</div>
+          <div class="metric-value" id="kpi-total-spent">$ 0.00</div>
+          <div class="metric-sub" style="color: #94A3B8;">✓ Registros sincronizados en tu móvil</div>
+        </div>
+        <div class="metric-box">
+          <div class="metric-label">PROMEDIO / DÍA</div>
+          <div class="metric-value" id="kpi-daily-avg">$ 0.00</div>
+        </div>
+        <div class="metric-box">
+          <div class="metric-label">MAYOR GASTO</div>
+          <div class="metric-value" id="kpi-top-category" style="font-size: 13px;">-</div>
+        </div>
+        <div class="metric-box full-width" style="display: flex; justify-content: space-between; align-items: center; background: var(--surface-card); color: var(--ink-primary); padding: 8px 10px;">
+          <div>
+            <div class="metric-label">MAYOR APORTADOR DEL PERIODO</div>
+            <div class="metric-value" id="kpi-top-spender" style="font-size: 14px; color: var(--navy-primary);">-</div>
+          </div>
+          <div class="metric-sub" style="color: var(--ink-muted); font-size: 10px;">👥 Miembro del hogar</div>
+        </div>
+      </div>
+
+      <!-- Tarjeta Fija de Lectura del Gráfico (Touch Projection Card) -->
+      <div class="touch-projection-card" id="touch-projection-card">
+        <span class="projection-label">Toca una barra para ver detalles</span>
+        <span class="projection-value">$ 0.00</span>
+      </div>
+
+      <!-- Histograma Temporal SVG -->
+      <div class="chart-container" id="chart-histogram-container"></div>
+
+      <!-- Desglose por Categorías -->
+      <div class="b-card">
+        <div class="b-card-header">
+          <div class="b-card-title">🏷️ DISTRIBUCIÓN POR CATEGORÍA</div>
+        </div>
+        <div class="category-breakdown-list" id="dashboard-categories-breakdown"></div>
+      </div>
+
+      <!-- Resumen de Liquidación del Hogar -->
+      <div class="b-card">
+        <div class="b-card-header">
+          <div class="b-card-title">⚖️ SALDOS Y LIQUIDACIÓN RÁPIDA</div>
+        </div>
+        <div id="dashboard-debts-summary"></div>
+      </div>
+    </section>
+
+    <!-- 2. VISTA: HISTORIAL DE TRANSACCIONES -->
+    <section class="view-section" id="view-transactions">
+      <div class="b-card-header" style="margin-bottom: 8px;">
+        <div class="b-card-title">💸 HISTORIAL DE MOVIMIENTOS</div>
+      </div>
+
+      <!-- Buscador y filtros -->
+      <div class="tx-filters">
+        <input type="search" id="tx-search" class="form-input" placeholder="🔍 Buscar por nombre o nota..." autocomplete="off">
+        <div class="tx-quick-chips" role="group" aria-label="Filtros rápidos de fecha">
+          <button type="button" class="tx-quick-chip" data-quick="week">Esta semana</button>
+          <button type="button" class="tx-quick-chip" data-quick="month">Este mes</button>
+          <button type="button" class="tx-quick-chip" data-quick="lastMonth">Mes pasado</button>
+        </div>
+        <div class="tx-filters-row">
+          <select id="tx-filter-category" class="form-select" aria-label="Filtrar por categoría">
+            <option value="">Todas las categorías</option>
+          </select>
+          <select id="tx-filter-member" class="form-select" aria-label="Filtrar por usuario">
+            <option value="">Todos los usuarios</option>
+          </select>
+        </div>
+        <div class="tx-filters-row">
+          <div class="tx-date-field">
+            <label class="form-label" for="tx-filter-from">Desde</label>
+            <input type="date" id="tx-filter-from" class="form-input">
+          </div>
+          <div class="tx-date-field">
+            <label class="form-label" for="tx-filter-to">Hasta</label>
+            <input type="date" id="tx-filter-to" class="form-input">
+          </div>
+        </div>
+        <div class="tx-filters-footer">
+          <span id="tx-results-summary" class="tx-results-summary"></span>
+          <button type="button" id="btn-clear-tx-filters" class="btn-action-icon">Limpiar filtros</button>
+        </div>
+      </div>
+
+      <!-- Total de los gastos con los filtros aplicados -->
+      <div class="tx-total-card" aria-live="polite">
+        <div>
+          <div class="tx-total-label">TOTAL CON FILTROS</div>
+          <div class="tx-total-value" id="tx-total-value">$ 0.00</div>
+        </div>
+        <div class="tx-total-count" id="tx-total-count">0 gastos</div>
+      </div>
+
+      <div class="transactions-list" id="transactions-full-list"></div>
+    </section>
+
+    <!-- 3. VISTA: GESTOR DE CATEGORÍAS -->
+    <section class="view-section" id="view-categories">
+      <div class="b-card-header" style="margin-bottom: 8px;">
+        <div class="b-card-title">🏷️ CATEGORÍAS DEL HOGAR</div>
+      </div>
+      <div class="categories-grid" id="categories-grid-container"></div>
+    </section>
+
+    <!-- 4. VISTA: MIEMBROS & BALANCE -->
+    <section class="view-section" id="view-members">
+      <div id="members-view-container"></div>
+    </section>
+
+    <!-- 5. VISTA: AJUSTES & BACKUP -->
+    <section class="view-section" id="view-settings">
+      <div id="settings-view-container"></div>
+    </section>
+
+  </main>
+
+  <!-- Botón Flotante Central (FAB) para Registro en <3 Segundos -->
+  <button class="fab-quick-add" id="fab-quick-add" title="Nuevo Gasto" aria-label="Nuevo Gasto">
+    +
+  </button>
+
+  <!-- Barra de Navegación Inferior Fija (Bottom Nav) -->
+  <nav class="bottom-nav">
+    <button class="nav-item is-active" data-tab="dashboard">
+      <span class="nav-icon">📊</span>
+      <span>DASH</span>
+    </button>
+    <button class="nav-item" data-tab="transactions">
+      <span class="nav-icon">💸</span>
+      <span>GASTOS</span>
+    </button>
+    <button class="nav-item" data-tab="categories">
+      <span class="nav-icon">🏷️</span>
+      <span>CAT</span>
+    </button>
+    <button class="nav-item" data-tab="members">
+      <span class="nav-icon">👥</span>
+      <span>CASA</span>
+    </button>
+    <button class="nav-item" data-tab="settings">
+      <span class="nav-icon">⚙️</span>
+      <span>AJUSTES</span>
+    </button>
+  </nav>
+
+  <!-- MODAL BOTTOM-SHEET: REGISTRO RÁPIDO DE GASTO (< 3 SEGUNDOS) -->
+  <div class="modal-overlay" id="modal-quick-add">
+    <div class="bottom-sheet">
+      <div class="sheet-header">
+        <div class="sheet-title">⚡ NUEVO GASTO DEL HOGAR</div>
+        <button class="btn-close-sheet" id="btn-close-quick-add" title="Cerrar">✕</button>
+      </div>
+
+      <form id="form-quick-add">
+        <!-- Campo de Monto Gigante con inputmode decimal -->
+        <div class="amount-input-box">
+          <span class="amount-currency">$</span>
+          <input type="number" step="0.01" min="0.01" inputmode="decimal" id="quick-add-amount" class="amount-field" placeholder="0.00" required autofocus>
+        </div>
+
+        <!-- Chips de Categoría (1-Tap Selection) -->
+        <div class="form-label">SELECCIONA CATEGORÍA (1 TAP):</div>
+        <div class="category-chips-grid" id="quick-add-category-chips"></div>
+
+        <!-- Selector de Reparto -->
+        <div class="form-label">DIVISIÓN DEL GASTO:</div>
+        <div class="split-selector">
+          <button type="button" class="split-option-btn is-active" data-split="SHARED_EQUAL">50/50 CASA</button>
+          <button type="button" class="split-option-btn" data-split="PERSONAL">100% PROPIO</button>
+        </div>
+
+        <!-- Opciones Rápidas Adicionales -->
+        <div class="form-group">
+          <label class="form-label">Pagado por:</label>
+          <select id="quick-add-payer" class="form-select"></select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Nota o descripción (Opcional):</label>
+          <input type="text" id="quick-add-note" class="form-input" placeholder="Ej. Walmart, Luz, Cena...">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Fecha del gasto:</label>
+          <input type="date" id="quick-add-date" class="form-input">
+        </div>
+
+        <!-- Botón Guardar -->
+        <button type="submit" class="b-btn btn-coral" style="margin-top: 10px; height: 48px; font-size: 15px;">
+          ✓ GUARDAR GASTO
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: CREAR / EDITAR CATEGORÍA -->
+  <div class="modal-overlay" id="modal-category-edit">
+    <div class="bottom-sheet">
+      <div class="sheet-header">
+        <div class="sheet-title" id="cat-modal-title">CATEGORÍA</div>
+        <button class="btn-close-sheet" id="btn-close-cat-modal">✕</button>
+      </div>
+
+      <form id="form-category-edit">
+        <input type="hidden" id="cat-edit-id">
+
+        <div class="form-group">
+          <label class="form-label">Nombre de la categoría:</label>
+          <input type="text" id="cat-edit-name" class="form-input" placeholder="Ej. Internet, Gimnasio..." required>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Icono o Emoji:</label>
+          <input type="text" id="cat-edit-icon" class="form-input" placeholder="🛒, ⚡, 🚗..." maxlength="4" required>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Color distintivo:</label>
+          <input type="color" id="cat-edit-color" class="form-input" style="height: 42px; padding: 2px;">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Límite Mensual Estimado ($):</label>
+          <input type="number" step="100" id="cat-edit-budget" class="form-input" placeholder="0 = Sin límite">
+        </div>
+
+        <button type="submit" class="b-btn" style="margin-top: 10px;">
+          GUARDAR CATEGORÍA
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: AÑADIR MIEMBRO -->
+  <div class="modal-overlay" id="modal-member-edit">
+    <div class="bottom-sheet">
+      <div class="sheet-header">
+        <div class="sheet-title">NUEVO MIEMBRO DEL HOGAR</div>
+        <button class="btn-close-sheet" id="btn-close-member-modal">✕</button>
+      </div>
+
+      <form id="form-member-edit">
+        <div class="form-group">
+          <label class="form-label">Nombre o Apodo:</label>
+          <input type="text" id="mem-edit-name" class="form-input" placeholder="Ej. Mamá, Carlos, Roomie..." required>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Avatar Emoji:</label>
+          <input type="text" id="mem-edit-avatar" class="form-input" placeholder="👤, 👩, 👨, ⚡..." maxlength="4">
+        </div>
+
+        <button type="submit" class="b-btn" style="margin-top: 10px;">
+          AÑADIR MIEMBRO
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: SALDAR DEUDA FORMAL (SETTLEMENT) -->
+  <div class="modal-overlay" id="modal-settlement">
+    <div class="bottom-sheet">
+      <div class="sheet-header">
+        <div class="sheet-title">🤝 SALDAR CUENTAS DEL HOGAR</div>
+        <button class="btn-close-sheet" id="btn-close-settlement">✕</button>
+      </div>
+
+      <div style="padding: 10px 0;">
+        <p id="settlement-description" style="font-size: 13px; line-height: 1.5; margin-bottom: 14px;"></p>
+        <button class="b-btn btn-emerald" id="btn-confirm-settlement" style="height: 46px;">
+          ✓ CONFIRMAR PAGO Y SALDAR SALDO
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: GUÍA DE INSTALACIÓN EN IOS SAFARI -->
+  <div class="modal-overlay" id="ios-install-modal">
+    <div class="bottom-sheet">
+      <div class="sheet-header">
+        <div class="sheet-title">📲 CÓMO INSTALAR EN TU IPHONE</div>
+        <button class="btn-close-sheet" onclick="document.getElementById('ios-install-modal').classList.remove('is-open')">✕</button>
+      </div>
+
+      <div style="font-size: 12px; line-height: 1.6; color: var(--ink-secondary);">
+        <p style="margin-bottom: 8px;">Para usar GastoCasa como una aplicación nativa independiente en iOS:</p>
+        <ol style="margin-left: 18px; margin-bottom: 12px;">
+          <li>Toca el botón <b>Compartir</b> (el icono con una flecha hacia arriba ⎋) en la barra inferior de Safari.</li>
+          <li>Desliza hacia abajo en las opciones y pulsa en <b>"Añadir a pantalla de inicio"</b> ➕.</li>
+          <li>Pulsa <b>"Añadir"</b> en la esquina superior derecha.</li>
+        </ol>
+        <button class="b-btn" onclick="document.getElementById('ios-install-modal').classList.remove('is-open')">
+          ENTENDIDO
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Script Modular Principal -->
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>
