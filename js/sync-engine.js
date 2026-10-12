@@ -161,6 +161,58 @@ export class CloudSyncEngine {
     return headers;
   }
 
+  // Registro de eliminaciones pendientes (para modo offline o resiliencia de red)
+  async recordPendingDelete(type, id) {
+    const settings = this.app.settings || { id: 'main_settings' };
+    const key = `pendingDeletes_${type}`;
+    settings[key] = Array.isArray(settings[key]) ? settings[key] : [];
+    if (!settings[key].includes(id)) {
+      settings[key].push(id);
+      await db.put('settings', settings);
+      this.app.settings = settings;
+    }
+  }
+
+  async clearPendingDelete(type, id) {
+    const settings = this.app.settings || {};
+    const key = `pendingDeletes_${type}`;
+    if (Array.isArray(settings[key])) {
+      settings[key] = settings[key].filter(item => item !== id);
+      await db.put('settings', settings);
+      this.app.settings = settings;
+    }
+  }
+
+  async processPendingDeletes() {
+    if (!this.config.enabled || !navigator.onLine) return;
+    const settings = this.app.settings || {};
+    const code = this.config.householdCode;
+
+    for (const type of ['members', 'categories', 'transactions']) {
+      const key = `pendingDeletes_${type}`;
+      const list = settings[key] || [];
+      if (list.length > 0) {
+        const remaining = [];
+        for (const id of list) {
+          try {
+            const res = await fetch(`${this.config.url}/rest/v1/${type}?id=eq.${encodeURIComponent(id)}&household_id=eq.${encodeURIComponent(code)}`, {
+              method: 'DELETE',
+              headers: this.getHeaders(false)
+            });
+            if (!res.ok && res.status !== 404) {
+              remaining.push(id);
+            }
+          } catch (e) {
+            remaining.push(id);
+          }
+        }
+        settings[key] = remaining;
+        await db.put('settings', settings);
+        this.app.settings = settings;
+      }
+    }
+  }
+
   // Diagnóstico completo de conexión con Supabase
   async testConnection(customUrl, customKey, customCode) {
     const url = (customUrl || this.config.url || '').trim().replace(/\/+$/, '');
@@ -315,7 +367,7 @@ export class CloudSyncEngine {
     if (this._onVisibility) document.removeEventListener('visibilitychange', this._onVisibility);
   }
 
-  // --- SINCRONIZACIÓN COMPLETA BIDIRECCIONAL ---
+  // --- SINCRONIZACIÓN COMPLETA BIDIRECCIONAL CON RECONCILIACIÓN DE ELIMINACIONES ---
   async syncNow(isManual = false) {
     if (!this.config.enabled || this.isSyncing) return;
     if (!navigator.onLine) {
@@ -329,7 +381,10 @@ export class CloudSyncEngine {
     try {
       const code = this.config.householdCode;
 
-      // 1. Asegurar que existe el hogar en la tabla households
+      // 1. Procesar eliminaciones pendientes antes de sincronizar
+      await this.processPendingDeletes();
+
+      // 2. Asegurar que existe el hogar en la tabla households
       const resHousehold = await fetch(`${this.config.url}/rest/v1/households?on_conflict=id`, {
         method: 'POST',
         headers: this.getHeaders(true),
@@ -347,86 +402,7 @@ export class CloudSyncEngine {
         }
       }
 
-      // 2. SUBIR (PUSH) DATOS LOCALES A LA NUBE
-      const [localMembers, localCategories, localTransactions] = await Promise.all([
-        db.getAll('members'),
-        db.getAll('categories'),
-        db.getAll('transactions')
-      ]);
-
-      if (localMembers.length > 0) {
-        const payloadMembers = localMembers.map(m => ({
-          id: m.id,
-          household_id: code,
-          name: m.name,
-          avatar: m.avatar || '👤',
-          color: m.color || '#0284C7',
-          is_active: m.isActive !== false,
-          updated_at: new Date().toISOString()
-        }));
-        const resM = await fetch(`${this.config.url}/rest/v1/members?on_conflict=id,household_id`, {
-          method: 'POST',
-          headers: this.getHeaders(true),
-          body: JSON.stringify(payloadMembers)
-        });
-        if (!resM.ok) {
-          const errData = await resM.json().catch(() => ({}));
-          throw new Error(`Error subiendo miembros (${resM.status}): ${errData.message || resM.statusText}`);
-        }
-      }
-
-      if (localCategories.length > 0) {
-        const payloadCategories = localCategories.map(c => ({
-          id: c.id,
-          household_id: code,
-          name: c.name,
-          icon: c.icon || '📦',
-          color: c.color || '#0284C7',
-          monthly_budget: c.monthlyBudget || 0,
-          is_system: Boolean(c.isSystem),
-          is_archived: Boolean(c.isArchived),
-          display_order: c.displayOrder || 0,
-          updated_at: new Date().toISOString()
-        }));
-        const resC = await fetch(`${this.config.url}/rest/v1/categories?on_conflict=id,household_id`, {
-          method: 'POST',
-          headers: this.getHeaders(true),
-          body: JSON.stringify(payloadCategories)
-        });
-        if (!resC.ok) {
-          const errData = await resC.json().catch(() => ({}));
-          throw new Error(`Error subiendo categorías (${resC.status}): ${errData.message || resC.statusText}`);
-        }
-      }
-
-      if (localTransactions.length > 0) {
-        const payloadTx = localTransactions.map(t => ({
-          id: t.id,
-          household_id: code,
-          type: t.type || 'expense',
-          amount: t.amount,
-          category_id: t.categoryId,
-          paid_by_member_id: t.paidByMemberId,
-          split_type: t.splitType || 'SHARED_EQUAL',
-          beneficiary_member_ids: t.beneficiaryMemberIds || [],
-          date: t.date,
-          note: t.note || '',
-          is_settlement: Boolean(t.isSettlement),
-          created_at: t.createdAt || Date.now(),
-          updated_at: new Date().toISOString()
-        }));
-        const resT = await fetch(`${this.config.url}/rest/v1/transactions?on_conflict=id,household_id`, {
-          method: 'POST',
-          headers: this.getHeaders(true),
-          body: JSON.stringify(payloadTx)
-        });
-        if (!resT.ok) {
-          const errData = await resT.json().catch(() => ({}));
-          throw new Error(`Error subiendo movimientos (${resT.status}): ${errData.message || resT.statusText}`);
-        }
-      }
-
-      // 3. BAJAR (PULL) DATOS ACTUALIZADOS DE LA NUBE
+      // 3. DESCARGAR (PULL) ESTADO ACTUAL DE LA NUBE
       const [resMembers, resCategories, resTx] = await Promise.all([
         fetch(`${this.config.url}/rest/v1/members?household_id=eq.${encodeURIComponent(code)}&select=*`, {
           headers: this.getHeaders(false)
@@ -449,35 +425,139 @@ export class CloudSyncEngine {
         resTx.json()
       ]);
 
-      // Guardar miembros de la nube en IndexedDB local
-      for (const m of cloudMembers) {
-        await db.put('members', {
+      // 4. RECONCILIACIÓN DE MIEMBROS
+      const localMembers = await db.getAll('members');
+      if (cloudMembers.length === 0 && localMembers.length > 0) {
+        // Inicializar la nube con los miembros locales si estaba completamente vacía
+        const payloadMembers = localMembers.map(m => ({
           id: m.id,
+          household_id: code,
           name: m.name,
-          avatar: m.avatar,
-          color: m.color,
-          isActive: m.is_active,
-          createdAt: m.created_at || new Date().toISOString()
+          avatar: m.avatar || '👤',
+          color: m.color || '#0284C7',
+          is_active: m.isActive !== false,
+          updated_at: new Date().toISOString()
+        }));
+        await fetch(`${this.config.url}/rest/v1/members?on_conflict=id,household_id`, {
+          method: 'POST',
+          headers: this.getHeaders(true),
+          body: JSON.stringify(payloadMembers)
         });
+        for (const m of localMembers) {
+          m.isNewOffline = false;
+          await db.put('members', m);
+        }
+      } else {
+        const cloudMemberIds = new Set(cloudMembers.map(m => m.id));
+
+        // Subir miembros que fueron creados offline en este dispositivo
+        const unpushedMembers = localMembers.filter(m => m.isNewOffline && !cloudMemberIds.has(m.id));
+        for (const newM of unpushedMembers) {
+          await this.pushMember(newM);
+          cloudMemberIds.add(newM.id);
+        }
+
+        // Eliminar miembros locales que ya NO existen en la nube (fueron borrados en otro teléfono)
+        for (const lm of localMembers) {
+          if (!cloudMemberIds.has(lm.id) && !lm.isNewOffline) {
+            console.log(`[Sync] Miembro "${lm.name}" fue eliminado en la nube, removiendo localmente.`);
+            await db.delete('members', lm.id);
+          }
+        }
+
+        // Guardar o actualizar miembros vigentes de la nube en IndexedDB local
+        for (const m of cloudMembers) {
+          await db.put('members', {
+            id: m.id,
+            name: m.name,
+            avatar: m.avatar,
+            color: m.color,
+            isActive: m.is_active,
+            createdAt: m.created_at || new Date().toISOString(),
+            isNewOffline: false
+          });
+        }
       }
 
-      // Guardar categorías de la nube en IndexedDB local
-      for (const c of cloudCategories) {
-        await db.put('categories', {
+      // 5. RECONCILIACIÓN DE CATEGORÍAS
+      const localCategories = await db.getAll('categories');
+      if (cloudCategories.length === 0 && localCategories.length > 0) {
+        const payloadCategories = localCategories.map(c => ({
           id: c.id,
+          household_id: code,
           name: c.name,
-          icon: c.icon,
-          color: c.color,
-          monthlyBudget: Number(c.monthly_budget) || 0,
-          isSystem: Boolean(c.is_system),
-          isArchived: Boolean(c.is_archived),
-          displayOrder: Number(c.display_order) || 0
+          icon: c.icon || '📦',
+          color: c.color || '#0284C7',
+          monthly_budget: c.monthlyBudget || 0,
+          is_system: Boolean(c.isSystem),
+          is_archived: Boolean(c.isArchived),
+          display_order: c.displayOrder || 0,
+          updated_at: new Date().toISOString()
+        }));
+        await fetch(`${this.config.url}/rest/v1/categories?on_conflict=id,household_id`, {
+          method: 'POST',
+          headers: this.getHeaders(true),
+          body: JSON.stringify(payloadCategories)
         });
+        for (const c of localCategories) {
+          c.isNewOffline = false;
+          await db.put('categories', c);
+        }
+      } else {
+        const cloudCatIds = new Set(cloudCategories.map(c => c.id));
+
+        // Subir categorías creadas offline
+        const unpushedCats = localCategories.filter(c => c.isNewOffline && !cloudCatIds.has(c.id));
+        for (const newC of unpushedCats) {
+          await this.pushCategory(newC);
+          cloudCatIds.add(newC.id);
+        }
+
+        // Eliminar categorías locales que fueron borradas en la nube
+        for (const lc of localCategories) {
+          if (!cloudCatIds.has(lc.id) && !lc.isNewOffline) {
+            console.log(`[Sync] Categoría "${lc.name}" fue eliminada en la nube, removiendo localmente.`);
+            await db.delete('categories', lc.id);
+          }
+        }
+
+        // Guardar o actualizar categorías de la nube
+        for (const c of cloudCategories) {
+          await db.put('categories', {
+            id: c.id,
+            name: c.name,
+            icon: c.icon,
+            color: c.color,
+            monthlyBudget: Number(c.monthly_budget) || 0,
+            isSystem: Boolean(c.is_system),
+            isArchived: Boolean(c.is_archived),
+            displayOrder: Number(c.display_order) || 0,
+            isNewOffline: false
+          });
+        }
       }
 
-      // Guardar transacciones de la nube en IndexedDB local
+      // 6. RECONCILIACIÓN DE TRANSACCIONES
+      const localTransactions = await db.getAll('transactions');
+      const cloudTxIds = new Set(cloudTx.map(t => t.id));
+
+      // Subir transacciones creadas offline en este dispositivo
+      const unpushedTx = localTransactions.filter(t => t.isNewOffline && !cloudTxIds.has(t.id));
+      for (const newTx of unpushedTx) {
+        await this.pushTransaction(newTx);
+        cloudTxIds.add(newTx.id);
+      }
+
+      // Eliminar transacciones locales que fueron eliminadas en la nube
+      for (const lt of localTransactions) {
+        if (!cloudTxIds.has(lt.id) && !lt.isNewOffline) {
+          await db.delete('transactions', lt.id);
+        }
+      }
+
+      // Guardar o actualizar transacciones de la nube en IndexedDB local
       for (const t of cloudTx) {
-        await db.put('transactions', sanitizeTransaction({
+        const sanitized = sanitizeTransaction({
           id: t.id,
           type: t.type,
           amount: Number(t.amount) || 0,
@@ -489,7 +569,9 @@ export class CloudSyncEngine {
           note: t.note,
           isSettlement: t.is_settlement,
           createdAt: Number(t.created_at) || Date.now()
-        }));
+        });
+        sanitized.isNewOffline = false;
+        await db.put('transactions', sanitized);
       }
 
       this.config.lastSyncTime = new Date();
@@ -512,9 +594,114 @@ export class CloudSyncEngine {
     }
   }
 
+  // --- MÉTODOS DE ENVÍO Y ELIMINACIÓN PUNTUAL ---
+
+  // Envío de miembro creado o modificado
+  async pushMember(member) {
+    if (!this.config.enabled || !navigator.onLine) return false;
+    try {
+      const res = await fetch(`${this.config.url}/rest/v1/members?on_conflict=id,household_id`, {
+        method: 'POST',
+        headers: this.getHeaders(true),
+        body: JSON.stringify([{
+          id: member.id,
+          household_id: this.config.householdCode,
+          name: member.name,
+          avatar: member.avatar || '👤',
+          color: member.color || '#0284C7',
+          is_active: member.isActive !== false,
+          updated_at: new Date().toISOString()
+        }])
+      });
+      if (res.ok) {
+        member.isNewOffline = false;
+        await db.put('members', member);
+        this.config.lastSyncTime = new Date();
+        this.updateUIStatus();
+        return true;
+      }
+      return false;
+    } catch (e) {
+      console.warn('[Sync] Error al enviar miembro:', e);
+      return false;
+    }
+  }
+
+  // Eliminación definitiva de un miembro en la nube
+  async deleteMember(memberId) {
+    await this.recordPendingDelete('members', memberId);
+    if (!this.config.enabled || !navigator.onLine) return;
+    try {
+      const res = await fetch(`${this.config.url}/rest/v1/members?id=eq.${encodeURIComponent(memberId)}&household_id=eq.${encodeURIComponent(this.config.householdCode)}`, {
+        method: 'DELETE',
+        headers: this.getHeaders(false)
+      });
+      if (res.ok) {
+        await this.clearPendingDelete('members', memberId);
+        this.config.lastSyncTime = new Date();
+        this.updateUIStatus();
+      }
+    } catch (e) {
+      console.warn('[Sync] Error al eliminar miembro en la nube:', e);
+    }
+  }
+
+  // Envío de categoría creada o modificada
+  async pushCategory(category) {
+    if (!this.config.enabled || !navigator.onLine) return false;
+    try {
+      const res = await fetch(`${this.config.url}/rest/v1/categories?on_conflict=id,household_id`, {
+        method: 'POST',
+        headers: this.getHeaders(true),
+        body: JSON.stringify([{
+          id: category.id,
+          household_id: this.config.householdCode,
+          name: category.name,
+          icon: category.icon || '📦',
+          color: category.color || '#0284C7',
+          monthly_budget: category.monthlyBudget || 0,
+          is_system: Boolean(category.isSystem),
+          is_archived: Boolean(category.isArchived),
+          display_order: category.displayOrder || 0,
+          updated_at: new Date().toISOString()
+        }])
+      });
+      if (res.ok) {
+        category.isNewOffline = false;
+        await db.put('categories', category);
+        this.config.lastSyncTime = new Date();
+        this.updateUIStatus();
+        return true;
+      }
+      return false;
+    } catch (e) {
+      console.warn('[Sync] Error al enviar categoría:', e);
+      return false;
+    }
+  }
+
+  // Eliminación definitiva de una categoría en la nube
+  async deleteCategory(catId) {
+    await this.recordPendingDelete('categories', catId);
+    if (!this.config.enabled || !navigator.onLine) return;
+    try {
+      const res = await fetch(`${this.config.url}/rest/v1/categories?id=eq.${encodeURIComponent(catId)}&household_id=eq.${encodeURIComponent(this.config.householdCode)}`, {
+        method: 'DELETE',
+        headers: this.getHeaders(false)
+      });
+      if (res.ok) {
+        await this.clearPendingDelete('categories', catId);
+        this.config.lastSyncTime = new Date();
+        this.updateUIStatus();
+      }
+    } catch (e) {
+      console.warn('[Sync] Error al eliminar categoría en la nube:', e);
+    }
+  }
+
   // Envío rápido individual de un movimiento recién creado/modificado
   async pushTransaction(tx) {
-    if (!this.config.enabled || !navigator.onLine) return;
+    if (!this.config.enabled || !navigator.onLine) return false;
     try {
       const res = await fetch(`${this.config.url}/rest/v1/transactions?on_conflict=id,household_id`, {
         method: 'POST',
@@ -542,6 +729,8 @@ export class CloudSyncEngine {
         this.app.pwaManager.showToast(`⚠️ Error en nube (${res.status}): ${errJson.message || 'No se pudo subir'}`);
         return false;
       }
+      tx.isNewOffline = false;
+      await db.put('transactions', tx);
       this.config.lastSyncTime = new Date();
       this.config.lastError = null;
       this.updateUIStatus();
@@ -552,8 +741,9 @@ export class CloudSyncEngine {
     }
   }
 
-  // Eliminación de un movimiento en la nube
+  // Eliminación definitiva de un movimiento en la nube
   async deleteTransaction(id) {
+    await this.recordPendingDelete('transactions', id);
     if (!this.config.enabled || !navigator.onLine) return;
     try {
       const res = await fetch(`${this.config.url}/rest/v1/transactions?id=eq.${encodeURIComponent(id)}&household_id=eq.${encodeURIComponent(this.config.householdCode)}`, {
@@ -561,6 +751,7 @@ export class CloudSyncEngine {
         headers: this.getHeaders(false)
       });
       if (res.ok) {
+        await this.clearPendingDelete('transactions', id);
         this.config.lastSyncTime = new Date();
         this.updateUIStatus();
       }

@@ -685,11 +685,17 @@ class AppController {
       for (const tx of associatedTx) {
         tx.categoryId = targetCat.id;
         await db.put('transactions', tx);
+        if (this.syncEngine?.config.enabled) {
+          this.syncEngine.pushTransaction(tx);
+        }
       }
     }
 
     // Eliminar la categoría
     await db.delete('categories', catId);
+    if (this.syncEngine?.config.enabled) {
+      await this.syncEngine.deleteCategory(catId);
+    }
     await this.refreshData();
     this.renderCurrentView();
     this.pwaManager.showToast('Categoría eliminada y gastos reasignados');
@@ -788,6 +794,9 @@ class AppController {
         if (mem) {
           mem.isActive = !mem.isActive;
           await db.put('members', mem);
+          if (this.syncEngine?.config.enabled) {
+            await this.syncEngine.pushMember(mem);
+          }
           await this.refreshData();
           this.renderMembersView();
           this.pwaManager.showToast(`Estado de ${mem.name} actualizado`);
@@ -853,6 +862,9 @@ class AppController {
           tx.beneficiaryMemberIds = tx.beneficiaryMemberIds.map(id => id === memberId ? targetMember.id : id);
         }
         await db.put('transactions', tx);
+        if (this.syncEngine?.config.enabled) {
+          this.syncEngine.pushTransaction(tx);
+        }
       }
     } else {
       const confirmDelete = confirm(`¿Estás seguro de que deseas eliminar permanentemente a "${member.name}"?`);
@@ -870,6 +882,9 @@ class AppController {
     }
 
     await db.delete('members', memberId);
+    if (this.syncEngine?.config.enabled) {
+      await this.syncEngine.deleteMember(memberId);
+    }
     await this.refreshData();
     this.renderMembersView();
     this.pwaManager.showToast(`Miembro "${member.name}" eliminado correctamente`);
@@ -1299,10 +1314,14 @@ class AppController {
           monthlyBudget: budget,
           isSystem: existing ? existing.isSystem : false,
           isArchived: false,
+          isNewOffline: !existing,
           displayOrder: existing ? existing.displayOrder : this.categories.length + 1
         };
 
         await db.put('categories', catData);
+        if (this.syncEngine?.config.enabled) {
+          await this.syncEngine.pushCategory(catData);
+        }
         await this.refreshData();
         modal.classList.remove('is-open');
         this.renderCurrentView();
@@ -1354,6 +1373,9 @@ class AppController {
             existing.avatar = avatar;
             existing.color = color;
             await db.put('members', existing);
+            if (this.syncEngine?.config.enabled) {
+              await this.syncEngine.pushMember(existing);
+            }
             this.pwaManager.showToast(`Miembro "${name}" actualizado`);
           }
         } else {
@@ -1364,9 +1386,13 @@ class AppController {
             avatar,
             color,
             isActive: true,
+            isNewOffline: true,
             createdAt: new Date().toISOString()
           };
           await db.put('members', newMember);
+          if (this.syncEngine?.config.enabled) {
+            await this.syncEngine.pushMember(newMember);
+          }
           this.pwaManager.showToast(`Miembro "${name}" añadido`);
         }
 
