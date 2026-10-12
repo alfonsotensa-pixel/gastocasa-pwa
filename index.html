@@ -132,6 +132,12 @@
             <option value="">Todos los usuarios</option>
           </select>
         </div>
+        <select id="tx-filter-split" class="form-select" aria-label="Filtrar por tipo de gasto">
+          <option value="">Todos los tipos (Compartidos y Personales)</option>
+          <option value="SHARED_EQUAL">🤝 Solo Compartidos (Gastos del hogar)</option>
+          <option value="PERSONAL">👤 Solo Individuales (Gastos personales)</option>
+          <option value="SETTLEMENT">⚡ Solo Liquidaciones</option>
+        </select>
         <div class="tx-filters-row">
           <div class="tx-date-field">
             <label class="form-label" for="tx-filter-from">Desde</label>

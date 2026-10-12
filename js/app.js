@@ -38,7 +38,7 @@ class AppController {
     this.chartEngine = null;
     this.pwaManager = null;
     this.syncEngine = new CloudSyncEngine(this);
-    this.txFilters = { search: '', categoryId: '', memberId: '', dateFrom: '', dateTo: '' };
+    this.txFilters = { search: '', categoryId: '', memberId: '', splitType: '', dateFrom: '', dateTo: '' };
   }
 
   async init() {
@@ -409,14 +409,15 @@ class AppController {
     bind('tx-search', 'search');
     bind('tx-filter-category', 'categoryId', 'change');
     bind('tx-filter-member', 'memberId', 'change');
+    bind('tx-filter-split', 'splitType', 'change');
     bind('tx-filter-from', 'dateFrom', 'change');
     bind('tx-filter-to', 'dateTo', 'change');
 
     const clearBtn = document.getElementById('btn-clear-tx-filters');
     if (clearBtn) {
       clearBtn.addEventListener('click', () => {
-        this.txFilters = { search: '', categoryId: '', memberId: '', dateFrom: '', dateTo: '' };
-        ['tx-search', 'tx-filter-category', 'tx-filter-member', 'tx-filter-from', 'tx-filter-to']
+        this.txFilters = { search: '', categoryId: '', memberId: '', splitType: '', dateFrom: '', dateTo: '' };
+        ['tx-search', 'tx-filter-category', 'tx-filter-member', 'tx-filter-split', 'tx-filter-from', 'tx-filter-to']
           .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
         this.renderTransactionsView();
       });
@@ -469,6 +470,7 @@ class AppController {
   populateTxFilterOptions() {
     const catSel = document.getElementById('tx-filter-category');
     const memSel = document.getElementById('tx-filter-member');
+    const splitSel = document.getElementById('tx-filter-split');
     if (catSel) {
       catSel.innerHTML = '<option value="">Todas las categorías</option>' +
         this.categories.map(c => `<option value="${c.id}">${c.icon} ${c.name}</option>`).join('');
@@ -478,6 +480,9 @@ class AppController {
       memSel.innerHTML = '<option value="">Todos los usuarios</option>' +
         this.members.map(m => `<option value="${m.id}">${m.avatar} ${m.name}${m.isActive ? '' : ' (inactivo)'}</option>`).join('');
       memSel.value = this.txFilters.memberId;
+    }
+    if (splitSel) {
+      splitSel.value = this.txFilters.splitType;
     }
   }
 
@@ -530,6 +535,14 @@ class AppController {
     const filtered = this.transactions.filter(tx => {
       if (f.categoryId && tx.categoryId !== f.categoryId) return false;
       if (f.memberId && tx.paidByMemberId !== f.memberId) return false;
+      if (f.splitType) {
+        if (f.splitType === 'SETTLEMENT') {
+          if (!tx.isSettlement && tx.splitType !== 'SETTLEMENT') return false;
+        } else {
+          if (tx.isSettlement) return false;
+          if (tx.splitType !== f.splitType) return false;
+        }
+      }
       if (f.dateFrom && tx.date < f.dateFrom) return false;
       if (f.dateTo && tx.date > f.dateTo) return false;
       if (query) {
