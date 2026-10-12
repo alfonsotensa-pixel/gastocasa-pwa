@@ -110,25 +110,87 @@ export class CloudSyncEngine {
     }
   }
 
+  // Parseador flexible de enlace o texto de invitación (de WhatsApp, portapapeles, etc.)
+  parseInviteLink(rawText) {
+    if (!rawText) return null;
+    try {
+      // Extraer URL si viene dentro de un texto más largo (ej. mensaje de WhatsApp)
+      const urlMatch = rawText.match(/https?:\/\/[^\s"'<>]+/);
+      const urlString = urlMatch ? urlMatch[0] : rawText;
+
+      let searchParams;
+      if (urlString.includes('?')) {
+        const queryPart = urlString.split('?')[1].split('#')[0];
+        searchParams = new URLSearchParams(queryPart);
+      } else {
+        searchParams = new URLSearchParams(urlString);
+      }
+
+      const url = searchParams.get('sync_url');
+      const key = searchParams.get('sync_key');
+      const code = searchParams.get('sync_code');
+
+      if (url && key && code) {
+        return {
+          url: decodeURIComponent(url).trim().replace(/\/+$/, ''),
+          anonKey: decodeURIComponent(key).trim(),
+          householdCode: decodeURIComponent(code).trim().toUpperCase()
+        };
+      }
+    } catch (e) {
+      console.warn('[Sync] Error parseando enlace:', e);
+    }
+    return null;
+  }
+
+  // Importar y aplicar enlace de invitación en 1 clic
+  async importInviteLink(rawText) {
+    const creds = this.parseInviteLink(rawText);
+    if (!creds) {
+      return {
+        ok: false,
+        message: 'No se encontraron las credenciales en el texto. Asegúrate de copiar el enlace de invitación completo.'
+      };
+    }
+
+    this.config.url = creds.url;
+    this.config.anonKey = creds.anonKey;
+    this.config.householdCode = creds.householdCode;
+    this.config.enabled = true;
+
+    await this.saveConfigToSettings();
+    this.startAutoSync();
+    await this.syncNow(true);
+
+    return {
+      ok: true,
+      code: creds.householdCode,
+      message: `¡Hogar ${creds.householdCode} vinculado y sincronizado exitosamente en esta app!`
+    };
+  }
+
   // Verifica si el enlace se abrió con ?sync_url=...&sync_key=...&sync_code=...
   checkInviteUrlParams() {
     try {
-      const params = new URLSearchParams(window.location.search);
-      const url = params.get('sync_url');
-      const key = params.get('sync_key');
-      const code = params.get('sync_code');
+      const creds = this.parseInviteLink(window.location.href);
 
-      if (url && key && code) {
-        this.config.url = decodeURIComponent(url).trim().replace(/\/+$/, '');
-        this.config.anonKey = decodeURIComponent(key).trim();
-        this.config.householdCode = decodeURIComponent(code).trim().toUpperCase();
+      if (creds) {
+        this.config.url = creds.url;
+        this.config.anonKey = creds.anonKey;
+        this.config.householdCode = creds.householdCode;
         this.config.enabled = true;
 
         // Guardar de inmediato en settings
         this.saveConfigToSettings().then(() => {
-          // Limpiar la URL para que no queden credenciales en el historial
-          const cleanUrl = window.location.origin + window.location.pathname;
-          window.history.replaceState({}, document.title, cleanUrl);
+          // IMPORTANTE PARA iOS / SAFARI:
+          // Solo limpiar la URL del historial si YA estamos en modo aplicación instalada (standalone).
+          // Si estamos en Safari navegador, dejamos los parámetros en la URL para que al pulsar
+          // "Agregar al inicio", el marcador del iPhone guarde la URL completa con los datos de conexión!
+          const isStandalone = Boolean(window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches);
+          if (isStandalone) {
+            const cleanUrl = window.location.origin + window.location.pathname;
+            window.history.replaceState({}, document.title, cleanUrl);
+          }
 
           this.app.pwaManager.showToast(`¡Hogar ${this.config.householdCode} vinculado desde el enlace!`);
           this.syncNow(true);

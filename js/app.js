@@ -907,6 +907,26 @@ class AppController {
         </div>
         <div id="sync-diagnostic-result" style="display: none; padding: 10px 14px; border-radius: var(--radius-micro); font-size: 12px; margin-bottom: 12px; border: var(--border-solid); line-height: 1.4;">
         </div>
+
+        <!-- Asistente de Vinculación Rápida para Apps Instaladas (iOS / Android) -->
+        <div style="background: var(--surface-muted); border: 1.5px dashed var(--navy-secondary); padding: 12px; border-radius: var(--radius-micro); margin-bottom: 14px;">
+          <div style="font-size: 12px; font-weight: 800; color: var(--navy-secondary); margin-bottom: 4px;">
+            📲 VINCULAR ESTA APP CON ENLACE DE INVITACIÓN
+          </div>
+          <p style="font-size: 11px; color: var(--ink-secondary); margin-bottom: 8px; line-height: 1.4;">
+            Si abriste esta app desde el icono de inicio de tu iPhone, pega aquí el enlace recibido por WhatsApp para conectar la base de datos en 1 solo paso:
+          </p>
+          <div style="display: flex; gap: 6px; margin-bottom: 6px;">
+            <input type="text" class="form-input" id="input-paste-invite" placeholder="Pega el enlace de WhatsApp aquí..." style="font-size: 12px; padding: 8px;">
+            <button class="b-btn" id="btn-apply-paste-invite" style="background: var(--cyan-active); font-size: 11px; font-weight: 800; white-space: nowrap; padding: 8px 12px;">
+              ⚡ VINCULAR
+            </button>
+          </div>
+          <button class="b-btn btn-secondary" id="btn-clipboard-paste-invite" style="width: 100%; font-size: 11px; padding: 8px; font-weight: 700;">
+            📋 PEGAR DEL PORTAPAPELES EN 1 CLIC
+          </button>
+        </div>
+
         <p style="font-size: 12px; color: var(--ink-secondary); margin-bottom: 12px; line-height: 1.5;">
           Conecta una base de datos gratuita de <b>Supabase</b> para que todos los teléfonos del hogar compartan y sincronicen sus gastos en tiempo real.
         </p>
@@ -979,6 +999,66 @@ class AppController {
 
     // Actualizar estado del badge de sync
     this.syncEngine?.updateUIStatus();
+
+    // Vincular pegado de enlace de invitación
+    const inputInvite = document.getElementById('input-paste-invite');
+    const btnApplyInvite = document.getElementById('btn-apply-paste-invite');
+    const btnClipInvite = document.getElementById('btn-clipboard-paste-invite');
+
+    if (btnApplyInvite && inputInvite) {
+      btnApplyInvite.onclick = async () => {
+        const text = inputInvite.value.trim();
+        if (!text) {
+          alert('Por favor pega el enlace de invitación en el campo de texto.');
+          return;
+        }
+        const res = await this.syncEngine.importInviteLink(text);
+        if (res.ok) {
+          this.pwaManager.showToast(res.message);
+          this.renderSettingsView();
+        } else {
+          alert(res.message);
+        }
+      };
+    }
+
+    if (btnClipInvite && inputInvite) {
+      btnClipInvite.onclick = async () => {
+        try {
+          if (navigator.clipboard && navigator.clipboard.readText) {
+            const clipText = await navigator.clipboard.readText();
+            if (clipText && clipText.trim()) {
+              inputInvite.value = clipText.trim();
+              const res = await this.syncEngine.importInviteLink(clipText.trim());
+              if (res.ok) {
+                this.pwaManager.showToast(res.message);
+                this.renderSettingsView();
+                return;
+              } else {
+                alert(res.message);
+              }
+            } else {
+              alert('El portapapeles está vacío. Copia el enlace en WhatsApp primero.');
+            }
+          } else {
+            const pasted = prompt('Pega el enlace de invitación de WhatsApp aquí:');
+            if (pasted) {
+              inputInvite.value = pasted.trim();
+              const res = await this.syncEngine.importInviteLink(pasted.trim());
+              if (res.ok) {
+                this.pwaManager.showToast(res.message);
+                this.renderSettingsView();
+              } else {
+                alert(res.message);
+              }
+            }
+          }
+        } catch (e) {
+          inputInvite.focus();
+          this.pwaManager.showToast('Mantén presionado el recuadro blanco y selecciona Pegar');
+        }
+      };
+    }
 
     // Botón de prueba y diagnóstico de conexión
     const btnTestSync = document.getElementById('btn-test-sync');
