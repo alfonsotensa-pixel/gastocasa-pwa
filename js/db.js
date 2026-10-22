@@ -44,12 +44,30 @@ class Database {
 
       request.onsuccess = async (event) => {
         this.db = event.target.result;
-        await this.ensureInitialSeed();
+
+        // Recuperación ante desconexión o suspensión del daemon IndexedDB en iOS WebKit
+        this.db.onclose = () => {
+          console.warn('[DB] Conexión IndexedDB cerrada por el sistema. Reinicializando...');
+          this.db = null;
+        };
+        this.db.onversionchange = () => {
+          if (this.db) {
+            this.db.close();
+            this.db = null;
+          }
+        };
+
+        try {
+          await this.ensureInitialSeed();
+        } catch (seedErr) {
+          console.warn('[DB] Error no bloqueante en ensureInitialSeed:', seedErr);
+        }
         resolve(this.db);
       };
 
       request.onerror = (event) => {
         console.error('Error al inicializar IndexedDB:', event.target.error);
+        this.db = null;
         reject(event.target.error);
       };
     });
@@ -80,55 +98,110 @@ class Database {
   async getAll(storeName) {
     const db = await this.init();
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(storeName, 'readonly');
-      const store = tx.objectStore(storeName);
-      const req = store.getAll();
-      req.onsuccess = () => resolve(req.result || []);
-      req.onerror = () => reject(req.error);
+      try {
+        const tx = db.transaction(storeName, 'readonly');
+        const store = tx.objectStore(storeName);
+        const req = store.getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => reject(req.error);
+      } catch (err) {
+        if (err.name === 'InvalidStateError' || err.message?.includes('closed')) {
+          this.db = null;
+        }
+        reject(err);
+      }
     });
   }
 
   async get(storeName, id) {
     const db = await this.init();
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(storeName, 'readonly');
-      const store = tx.objectStore(storeName);
-      const req = store.get(id);
-      req.onsuccess = () => resolve(req.result || null);
-      req.onerror = () => reject(req.error);
+      try {
+        const tx = db.transaction(storeName, 'readonly');
+        const store = tx.objectStore(storeName);
+        const req = store.get(id);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => reject(req.error);
+      } catch (err) {
+        if (err.name === 'InvalidStateError' || err.message?.includes('closed')) {
+          this.db = null;
+        }
+        reject(err);
+      }
     });
   }
 
   async put(storeName, item) {
+    // Protección estricta: si es settings, asegurar que siempre tenga la clave primaria 'id'
+    if (storeName === 'settings' && item && !item.id) {
+      item.id = 'main_settings';
+    }
+
     const db = await this.init();
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(storeName, 'readwrite');
-      const store = tx.objectStore(storeName);
-      const req = store.put(item);
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
+      try {
+        const tx = db.transaction(storeName, 'readwrite');
+        const store = tx.objectStore(storeName);
+        let result = null;
+
+        const req = store.put(item);
+        req.onsuccess = () => {
+          result = req.result;
+        };
+        req.onerror = () => reject(req.error);
+
+        // En Safari/iOS WebKit, esperar a tx.oncomplete garantiza persistencia física en disco
+        tx.oncomplete = () => resolve(result);
+        tx.onerror = () => reject(tx.error || req.error);
+        tx.onabort = () => reject(tx.error || new Error('Transacción abortada'));
+      } catch (err) {
+        if (err.name === 'InvalidStateError' || err.message?.includes('closed')) {
+          this.db = null;
+        }
+        reject(err);
+      }
     });
   }
 
   async delete(storeName, id) {
     const db = await this.init();
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(storeName, 'readwrite');
-      const store = tx.objectStore(storeName);
-      const req = store.delete(id);
-      req.onsuccess = () => resolve(true);
-      req.onerror = () => reject(req.error);
+      try {
+        const tx = db.transaction(storeName, 'readwrite');
+        const store = tx.objectStore(storeName);
+        const req = store.delete(id);
+        req.onerror = () => reject(req.error);
+
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => reject(tx.error || req.error);
+        tx.onabort = () => reject(tx.error || new Error('Transacción abortada'));
+      } catch (err) {
+        if (err.name === 'InvalidStateError' || err.message?.includes('closed')) {
+          this.db = null;
+        }
+        reject(err);
+      }
     });
   }
 
   async clear(storeName) {
     const db = await this.init();
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(storeName, 'readwrite');
-      const store = tx.objectStore(storeName);
-      const req = store.clear();
-      req.onsuccess = () => resolve(true);
-      req.onerror = () => reject(req.error);
+      try {
+        const tx = db.transaction(storeName, 'readwrite');
+        const store = tx.objectStore(storeName);
+        const req = store.clear();
+        req.onerror = () => reject(req.error);
+
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => reject(tx.error || req.error);
+        tx.onabort = () => reject(tx.error || new Error('Transacción abortada'));
+      } catch (err) {
+        if (err.name === 'InvalidStateError' || err.message?.includes('closed')) {
+          this.db = null;
+        }
+        reject(err);
+      }
     });
   }
 

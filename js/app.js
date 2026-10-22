@@ -4,7 +4,8 @@ import {
   SplitTypes, 
   generateId, 
   formatMoney, 
-  sanitizeTransaction 
+  sanitizeTransaction,
+  DEFAULT_SETTINGS
 } from './models.js';
 import { 
   getISOWeekRange, 
@@ -81,7 +82,10 @@ class AppController {
     this.members = members;
     // Transacciones ordenadas descendentemente por fecha y creación
     this.transactions = transactions.sort((a, b) => (b.date.localeCompare(a.date)) || (b.createdAt - a.createdAt));
-    this.settings = settingsList[0] || {};
+
+    const mainSettings = settingsList.find(s => s && s.id === 'main_settings') || settingsList[0] || { id: 'main_settings', ...DEFAULT_SETTINGS };
+    if (!mainSettings.id) mainSettings.id = 'main_settings';
+    this.settings = mainSettings;
     
     // Asignar miembro activo
     const activeMember = this.members.find(m => m.id === this.settings.activeMemberId && m.isActive) 
@@ -1187,12 +1191,7 @@ class AppController {
       btnDisconnectSync.onclick = async () => {
         const confirmDisc = confirm('¿Deseas desconectar este móvil de la nube y volver al modo solo local?');
         if (!confirmDisc) return;
-        this.syncEngine.config.enabled = false;
-        this.syncEngine.config.url = '';
-        this.syncEngine.config.anonKey = '';
-        this.syncEngine.config.householdCode = '';
-        this.syncEngine.stopAutoSync();
-        await this.syncEngine.saveConfigToSettings();
+        await this.syncEngine.disconnect();
         this.pwaManager.showToast('Desconectado de la nube');
         this.renderSettingsView();
       };

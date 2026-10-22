@@ -96,18 +96,93 @@ export class CloudSyncEngine {
   }
 
   init(settings = {}) {
-    // Cargar configuración guardada en settings
-    this.config.url = (settings.syncUrl || '').trim().replace(/\/+$/, '');
-    this.config.anonKey = (settings.syncKey || '').trim();
-    this.config.householdCode = (settings.syncCode || '').trim().toUpperCase();
+    // 1. Cargar desde IndexedDB (settings)
+    let url = (settings.syncUrl || '').trim().replace(/\/+$/, '');
+    let key = (settings.syncKey || '').trim();
+    let code = (settings.syncCode || '').trim().toUpperCase();
+
+    // 2. CAPA FALLBACK: Si falta en IndexedDB (fallo común de WebKit/iOS al cerrar la app), recuperar de localStorage
+    if (!url || !key || !code) {
+      try {
+        const rawJson = localStorage.getItem('gastocasa_sync_config');
+        if (rawJson) {
+          const parsed = JSON.parse(rawJson);
+          if (parsed && parsed.url && parsed.anonKey && parsed.householdCode) {
+            url = (parsed.url || '').trim().replace(/\/+$/, '');
+            key = (parsed.anonKey || '').trim();
+            code = (parsed.householdCode || '').trim().toUpperCase();
+          }
+        }
+        if (!url) url = (localStorage.getItem('gastocasa_sync_url') || '').trim().replace(/\/+$/, '');
+        if (!key) key = (localStorage.getItem('gastocasa_sync_key') || '').trim();
+        if (!code) code = (localStorage.getItem('gastocasa_sync_code') || '').trim().toUpperCase();
+      } catch (e) {
+        console.warn('[Sync] Error leyendo de localStorage:', e);
+      }
+    }
+
+    // 3. CAPA FALLBACK 2: Recuperar de Cookie persistente si el sandbox de iOS WebClip aisló el almacenamiento
+    if (!url || !key || !code) {
+      try {
+        const match = document.cookie.match(/(?:^|;\s*)gastocasa_sync=([^;]*)/);
+        if (match && match[1]) {
+          const cookieParsed = JSON.parse(decodeURIComponent(match[1]));
+          if (cookieParsed && cookieParsed.url && cookieParsed.anonKey && cookieParsed.householdCode) {
+            url = (cookieParsed.url || '').trim().replace(/\/+$/, '');
+            key = (cookieParsed.anonKey || '').trim();
+            code = (cookieParsed.householdCode || '').trim().toUpperCase();
+          }
+        }
+      } catch (e) {
+        console.warn('[Sync] Error leyendo cookie de respaldo:', e);
+      }
+    }
+
+    this.config.url = url;
+    this.config.anonKey = key;
+    this.config.householdCode = code;
     this.config.enabled = Boolean(this.config.url && this.config.anonKey && this.config.householdCode);
+
+    // Si fue recuperado de localStorage/Cookie pero faltaba en IndexedDB, re-sincronizarlo de vuelta a IndexedDB
+    if (this.config.enabled && (!settings.syncUrl || !settings.syncKey || !settings.syncCode)) {
+      this.saveConfigToSettings().catch(() => {});
+    }
 
     // Comprobar parámetros en la URL (ej. invitación compartida por WhatsApp)
     this.checkInviteUrlParams();
 
+    // Registrar escuchadores de ciclo de vida móvil para asegurar guardado antes de que iOS suspenda o mate el proceso
+    this.setupLifecycleGuards();
+
     if (this.config.enabled) {
       this.startAutoSync();
     }
+  }
+
+  // Protege contra la terminación abrupta en iOS al cerrar la app o cambiar de pestaña
+  setupLifecycleGuards() {
+    const flushConfig = () => {
+      if (this.config.enabled && this.config.url && this.config.anonKey && this.config.householdCode) {
+        try {
+          const payload = JSON.stringify({
+            url: this.config.url,
+            anonKey: this.config.anonKey,
+            householdCode: this.config.householdCode,
+            enabled: true
+          });
+          localStorage.setItem('gastocasa_sync_config', payload);
+          localStorage.setItem('gastocasa_sync_url', this.config.url);
+          localStorage.setItem('gastocasa_sync_key', this.config.anonKey);
+          localStorage.setItem('gastocasa_sync_code', this.config.householdCode);
+          localStorage.setItem('gastocasa_sync_enabled', 'true');
+        } catch (e) {}
+      }
+    };
+
+    window.addEventListener('pagehide', flushConfig);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') flushConfig();
+    });
   }
 
   // Parseador flexible de enlace o texto de invitación (de WhatsApp, portapapeles, etc.)
@@ -165,7 +240,7 @@ export class CloudSyncEngine {
     return {
       ok: true,
       code: creds.householdCode,
-      message: `¡Hogar ${creds.householdCode} vinculado y sincronizado exitosamente en esta app!`
+      message: `¡Hogar ${creds.householdCode} vinculado y guardado permanentemente en esta app!`
     };
   }
 
@@ -180,19 +255,17 @@ export class CloudSyncEngine {
         this.config.householdCode = creds.householdCode;
         this.config.enabled = true;
 
-        // Guardar de inmediato en settings
+        // Guardar de inmediato en todas las capas
         this.saveConfigToSettings().then(() => {
           // IMPORTANTE PARA iOS / SAFARI:
           // Solo limpiar la URL del historial si YA estamos en modo aplicación instalada (standalone).
-          // Si estamos en Safari navegador, dejamos los parámetros en la URL para que al pulsar
-          // "Agregar al inicio", el marcador del iPhone guarde la URL completa con los datos de conexión!
           const isStandalone = Boolean(window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches);
           if (isStandalone) {
             const cleanUrl = window.location.origin + window.location.pathname;
             window.history.replaceState({}, document.title, cleanUrl);
           }
 
-          this.app.pwaManager.showToast(`¡Hogar ${this.config.householdCode} vinculado desde el enlace!`);
+          this.app?.pwaManager?.showToast(`¡Hogar ${this.config.householdCode} vinculado desde el enlace!`);
           this.syncNow(true);
         });
       }
@@ -201,14 +274,70 @@ export class CloudSyncEngine {
     }
   }
 
+  // --- PERSISTENCIA MULTI-CAPA ULTRA-RESILIENTE (iOS / WebKit / Standalone PWA) ---
   async saveConfigToSettings() {
-    const settings = this.app.settings || { id: 'main_settings' };
-    settings.syncUrl = this.config.url;
-    settings.syncKey = this.config.anonKey;
-    settings.syncCode = this.config.householdCode;
-    await db.put('settings', settings);
-    this.app.settings = settings;
+    const url = (this.config.url || '').trim().replace(/\/+$/, '');
+    const key = (this.config.anonKey || '').trim();
+    const code = (this.config.householdCode || '').trim().toUpperCase();
+    const enabled = Boolean(this.config.enabled && url && key && code);
+
+    // 1. CAPA 1: localStorage (Inmediato, síncrono, resistente al cierre de app en iOS)
+    try {
+      if (enabled) {
+        const payload = JSON.stringify({ url, anonKey: key, householdCode: code, enabled: true });
+        localStorage.setItem('gastocasa_sync_config', payload);
+        localStorage.setItem('gastocasa_sync_url', url);
+        localStorage.setItem('gastocasa_sync_key', key);
+        localStorage.setItem('gastocasa_sync_code', code);
+        localStorage.setItem('gastocasa_sync_enabled', 'true');
+      } else {
+        localStorage.removeItem('gastocasa_sync_config');
+        localStorage.removeItem('gastocasa_sync_url');
+        localStorage.removeItem('gastocasa_sync_key');
+        localStorage.removeItem('gastocasa_sync_code');
+        localStorage.removeItem('gastocasa_sync_enabled');
+      }
+    } catch (e) {
+      console.warn('[Sync] Error escribiendo en localStorage:', e);
+    }
+
+    // 2. CAPA 2: Cookies persistentes (por si Safari tiene restricciones de sandbox WebClip)
+    try {
+      if (enabled) {
+        const cookieVal = encodeURIComponent(JSON.stringify({ url, anonKey: key, householdCode: code }));
+        document.cookie = `gastocasa_sync=${cookieVal}; path=/; max-age=31536000; SameSite=Lax`;
+      } else {
+        document.cookie = 'gastocasa_sync=; path=/; max-age=0; SameSite=Lax';
+      }
+    } catch (e) {
+      console.warn('[Sync] Error escribiendo cookie:', e);
+    }
+
+    // 3. CAPA 3: IndexedDB con id garantizado y commit confirmado
+    try {
+      const settings = (this.app && this.app.settings) ? this.app.settings : {};
+      settings.id = 'main_settings';
+      settings.syncUrl = url;
+      settings.syncKey = key;
+      settings.syncCode = code;
+      settings.syncEnabled = enabled;
+      await db.put('settings', settings);
+      if (this.app) this.app.settings = settings;
+    } catch (e) {
+      console.warn('[Sync] Error persistiendo en IndexedDB settings:', e);
+    }
+
     this.updateUIStatus();
+  }
+
+  // Desconexión limpia y completa en todas las capas de almacenamiento
+  async disconnect() {
+    this.config.enabled = false;
+    this.config.url = '';
+    this.config.anonKey = '';
+    this.config.householdCode = '';
+    this.stopAutoSync();
+    await this.saveConfigToSettings();
   }
 
   getHeaders(includeUpsert = true) {
